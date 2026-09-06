@@ -1,0 +1,22 @@
+# Grant read access to the Intel RAPL "psys" energy counter, so hud.py can
+# report real system power draw while the machine runs on mains. The battery
+# reports nothing then, and neither ADP1 nor the USB-C source node on this
+# board measures wall draw.
+#
+# ONLY psys. The package-0 and core domains stay root-only on purpose: those
+# are the fine-grained CPU counters that PLATYPUS-style power side-channel
+# attacks (CVE-2020-8694) actually work on. psys folds in display, SSD and
+# regulators, so the data-dependent CPU signal drowns in it — and psys is the
+# only domain this panel wants anyway, being whole-board rather than CPU power.
+#
+# Matched on the domain NAME rather than the index: intel-rapl:1 is where psys
+# sits today, but that numbering is not guaranteed across kernel updates, and a
+# rule pinned to the index would silently target the wrong domain or nothing.
+#
+# Install:  sudo cp 99-rapl-psys.rules /etc/udev/rules.d/
+#           sudo udevadm control --reload
+# Remove:   sudo rm /etc/udev/rules.d/99-rapl-psys.rules   (then reboot)
+#
+# sysfs attributes cannot take MODE=/GROUP= — those apply to /dev nodes — so
+# the permission is set with an explicit chmod.
+SUBSYSTEM=="powercap", ACTION=="add", ATTR{name}=="psys", RUN+="/bin/chmod a+r /sys/class/powercap/%k/energy_uj"

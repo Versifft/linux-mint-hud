@@ -1,0 +1,11 @@
+# The claude.ai session cookie. Never commit this — it is a live credential.
+.claude_web_cookie
+
+# Written every two seconds by the panel; nothing here is worth versioning.
+cache/
+__pycache__/
+*.pyc
+
+# Local editor/OS noise
+*.swp
+*~

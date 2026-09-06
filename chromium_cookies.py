@@ -1,0 +1,146 @@
+#!/usr/bin/env python3
+"""Reads claude.ai cookies out of a Chromium-family browser.
+
+Chromium encrypts cookie values with AES-128-CBC. On Linux the key is derived
+with PBKDF2 (salt 'saltysalt', one iteration, 16-byte key) from a password that
+depends on the value's prefix:
+
+  v10  a fixed password, 'peanuts', used when no keyring is available
+  v11  a password stored in the desktop keyring (gnome-keyring / kwallet),
+       looked up here through libsecret
+
+Newer Chromium (v127+) prepends a 32-byte SHA-256 domain hash to the plaintext,
+which has to be stripped. We detect that rather than assume it: a session
+cookie is ASCII, so if byte 0 is not printable we drop the first 32.
+
+This is a separate module from browser_cookie because the Chromium path
+pulls in cryptography and libsecret that the Firefox path does not need.
+"""
+import os
+import sqlite3
+import shutil
+import tempfile
+
+CHROMIUM_DIRS = (
+    ".config/chromium",
+    ".config/google-chrome",
+    ".config/BraveSoftware/Brave-Browser",
+    ".config/microsoft-edge",
+    ".config/vivaldi",
+    ".var/app/org.chromium.Chromium/config/chromium",   # flatpak
+)
+
+
+def _keyring_password(app_hint):
+    """The browser's own encryption password from the keyring, or None."""
+    try:
+        import gi
+        gi.require_version("Secret", "1")
+        from gi.repository import Secret
+    except Exception:
+        return None
+    # the schema name and the "application" attribute have both drifted across
+    # versions, so try the known combinations
+    schemas = ("chrome_libsecret_os_crypt_password_v2",
+               "chrome_libsecret_os_crypt_password_v1",
+               "chrome_libsecret_password_v2",
+               "chrome_libsecret_password_v1")
+    apps = (app_hint, "chromium", "chrome")
+    for sname in schemas:
+        schema = Secret.Schema.new(sname, Secret.SchemaFlags.DONT_MATCH_NAME,
+                                   {"application": Secret.SchemaAttributeType.STRING})
+        for app in apps:
+            try:
+                pw = Secret.password_lookup_sync(schema, {"application": app}, None)
+            except Exception:
+                pw = None
+            if pw:
+                return pw.encode("utf-8")
+    return None
+
+
+def _derive(password):
+    from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+    from cryptography.hazmat.primitives import hashes
+    return PBKDF2HMAC(algorithm=hashes.SHA1(), length=16, salt=b"saltysalt",
+                      iterations=1).derive(password)
+
+
+def _decrypt(blob, key_v10, key_v11):
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+    prefix = blob[:3]
+    key = key_v11 if prefix == b"v11" else key_v10
+    if key is None or prefix not in (b"v10", b"v11"):
+        return None
+    dec = Cipher(algorithms.AES(key), modes.CBC(b" " * 16)).decryptor()
+    plain = dec.update(blob[3:]) + dec.finalize()
+    if not plain:
+        return None
+    pad = plain[-1]
+    if 1 <= pad <= 16:
+        plain = plain[:-pad]
+    # v127+ prepends a 32-byte SHA-256 domain hash; a session cookie is ASCII,
+    # so a non-printable first byte means the hash is there and must go
+    if plain and not (0x20 <= plain[0] <= 0x7e):
+        plain = plain[32:]
+    try:
+        return plain.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
+def find_store():
+    """(cookie-db path, app hint) for the first Chromium profile found."""
+    home = os.path.expanduser("~")
+    for base in CHROMIUM_DIRS:
+        for prof in ("Default", "Profile 1"):
+            path = os.path.join(home, base, prof, "Cookies")
+            if os.path.exists(path):
+                return path, os.path.basename(base).lower()
+    return None, None
+
+
+def read_cookies():
+    """[(name, value), ...] for claude.ai, or [] if nothing is readable."""
+    store, hint = find_store()
+    if not store:
+        return []
+    key_v11 = None
+    pw = _keyring_password(hint)
+    if pw is not None:
+        try:
+            key_v11 = _derive(pw)
+        except Exception:
+            key_v11 = None
+    key_v10 = _derive(b"peanuts")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        dst = os.path.join(tmp, "Cookies")
+        shutil.copy2(store, dst)
+        con = sqlite3.connect(dst)
+        try:
+            rows = con.execute(
+                "select name, encrypted_value from cookies "
+                "where host_key = 'claude.ai' or host_key like '%.claude.ai'"
+            ).fetchall()
+        finally:
+            con.close()
+
+    out = []
+    for name, blob in rows:
+        val = _decrypt(blob, key_v10, key_v11) if blob else None
+        if val:
+            out.append((name, val))
+    return out
+
+
+if __name__ == "__main__":
+    import sys
+    rows = read_cookies()
+    if not rows:
+        print("no readable claude.ai cookies in any Chromium profile",
+              file=sys.stderr)
+        sys.exit(1)
+    names = sorted(n for n, _ in rows)
+    print(f"cookies: {len(names)} ({', '.join(names)})")
+    print("sessionKey present:", any(n == "sessionKey" for n, _ in rows))
