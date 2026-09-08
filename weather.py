@@ -66,6 +66,7 @@ def main():
             "hi": round(daily["temperature_2m_max"][0]),
             "lo": round(daily["temperature_2m_min"][0]),
             "desc": WMO.get(cur["weather_code"], "—"),
+            "code": cur["weather_code"],
             "name": name,
         }
         print(json.dumps(out))

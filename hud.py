@@ -311,6 +311,77 @@ def _pctl(vals, q):
     return sv[min(len(sv) - 1, int(len(sv) * q))]
 
 
+def draw_weather_icon(img, cx, cy, s, code):
+    """Small hand-drawn weather glyph, in the same supersampled-Pillow idiom as
+    the gauges and bars — no icon font to depend on. Shape follows the WMO
+    weather code: sun, sun-behind-cloud, cloud, fog, rain, snow, thunder."""
+    gs = SS * 3
+    box = int(s * 3.4)
+    C = box * gs / 2.0
+    R = s * gs
+    tile = Image.new("RGBA", (box * gs, box * gs), (0, 0, 0, 0))
+    d = ImageDraw.Draw(tile)
+    SUN, CLOUD, RAIN, SNOW = (240, 185, 70), (200, 208, 222), (96, 176, 255), (214, 226, 240)
+
+    def disc(x, y, r, fill):
+        d.ellipse([x - r, y - r, x + r, y + r], fill=fill)
+
+    def sun(x, y, r, rays=True):
+        if rays:
+            import math
+            for k in range(8):
+                a = k * math.pi / 4
+                x0, y0 = x + math.cos(a) * r * 1.35, y + math.sin(a) * r * 1.35
+                x1, y1 = x + math.cos(a) * r * 1.9, y + math.sin(a) * r * 1.9
+                d.line([(x0, y0), (x1, y1)], fill=(*SUN, 255), width=int(gs * 1.4))
+        disc(x, y, r, (*SUN, 255))
+
+    def cloud(x, y, r, col=CLOUD):
+        disc(x - r * 0.95, y, r * 0.72, (*col, 255))
+        disc(x + r * 0.95, y, r * 0.78, (*col, 255))
+        disc(x - r * 0.1, y - r * 0.55, r * 0.9, (*col, 255))
+        d.rounded_rectangle([x - r * 1.7, y - r * 0.1, x + r * 1.7, y + r * 0.75],
+                            radius=r * 0.55, fill=(*col, 255))
+
+    grp = ("clear" if code in (0, 1) else
+           "part" if code == 2 else
+           "fog" if code in (45, 48) else
+           "snow" if code in (71, 73, 75, 77, 85, 86) else
+           "thunder" if code in (95, 96, 99) else
+           "rain" if code in (51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82) else
+           "cloud")
+
+    if grp == "clear":
+        sun(C, C, R * 0.62)
+    elif grp == "part":
+        sun(C - R * 0.55, C - R * 0.5, R * 0.44)
+        cloud(C + R * 0.25, C + R * 0.35, R * 0.72)
+    elif grp == "fog":
+        cloud(C, C - R * 0.35, R * 0.8)
+        for i in range(3):
+            yy = C + R * (0.7 + i * 0.42)
+            d.line([(C - R * 1.4, yy), (C + R * 1.4, yy)], fill=(*CLOUD, 200), width=int(gs * 1.3))
+    else:
+        cloud(C, C - R * 0.35, R * 0.85)
+        base = C + R * 0.7
+        if grp == "rain":
+            for dx in (-R * 0.7, 0, R * 0.7):
+                d.line([(C + dx, base), (C + dx - R * 0.3, base + R * 0.7)],
+                       fill=(*RAIN, 255), width=int(gs * 1.6))
+        elif grp == "snow":
+            for dx in (-R * 0.7, 0, R * 0.7):
+                disc(C + dx, base + R * 0.35, gs * 1.6, (*SNOW, 255))
+        elif grp == "thunder":
+            b = [(C - R * 0.15, base - R * 0.1), (C - R * 0.55, base + R * 0.6),
+                 (C - R * 0.1, base + R * 0.55), (C - R * 0.45, base + R * 1.25),
+                 (C + R * 0.5, base + R * 0.3), (C + R * 0.05, base + R * 0.35),
+                 (C + R * 0.35, base - R * 0.1)]
+            d.polygon(b, fill=(*SUN, 255))
+
+    tile = tile.resize((box * SS, box * SS), Image.LANCZOS)
+    img.alpha_composite(tile, (int(cx * SS - box * SS / 2), int(cy * SS - box * SS / 2)))
+
+
 def gauge(img, cx, cy, r, thick, frac, color):
     """270-degree donut gauge. Arcs are drawn into a locally supersampled tile
     because Pillow's arc() has no antialiasing of its own."""
@@ -1215,6 +1286,12 @@ def render(write_png=True):
     else:
         slot = None
 
+    # Fixed height for the top slot so the panel does not resize as it swaps
+    # between Claude and weather (they differ in natural height, which otherwise
+    # jogged everything below by a frame on every switch). Both render inside
+    # SLOT_H and y is snapped to it.
+    SLOT_H = 95
+    slot_start = y
     if slot == "claude":
         # heavier title and larger figures than the sections below it
         label(d, PAD, y, "claude", CORAL, tracking=2.4)
@@ -1231,21 +1308,23 @@ def render(write_png=True):
             y += 19
             bar(img, PAD, y, CW, 8, pct / 100, ramp=True)
             y += 17
-        y += gap(30)
     elif slot == "weather":
         label(d, PAD, y, "weather", ACCENT, tracking=2.4)
         if weather.get("name"):
             label_r(d, R, y, weather["name"], DIM, size=T_MICRO)
-        y += 25
         t = weather["temp"]
+        icon_cy = slot_start + 50
+        draw_weather_icon(img, PAD + 17, icon_cy, 14, weather.get("code", 3))
+        tx = PAD + 44
         ttxt = f"{t}°"
-        text(d, PAD, y, ttxt, f_big, weather_hue(t))
-        text(d, PAD + measure(f_big, ttxt) / SS + 12, y + 8, weather["desc"],
-             F(UI_MED, T_BODY), DIM)
-        y += 30
-        detail = f"H {weather['hi']}°   L {weather['lo']}°   feels {weather['feels']}°"
-        text(d, PAD, y, detail, F(UI_MED, T_BODY), MUTE)
-        y += 16
+        text(d, tx, icon_cy - 16, ttxt, f_big, weather_hue(t))
+        text(d, tx + measure(f_big, ttxt) / SS + 13, icon_cy - 7,
+             weather["desc"], F(UI_MED, T_BODY), DIM)
+        detail = f"H {weather['hi']}°    L {weather['lo']}°    feels {weather['feels']}°"
+        text(d, PAD, slot_start + 74, detail, F(UI_MED, T_BODY), MUTE)
+
+    if slot:
+        y = slot_start + SLOT_H
         y += gap(30)
 
     # ============ HEADER =========================================

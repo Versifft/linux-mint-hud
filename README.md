@@ -16,7 +16,8 @@ desktop underneath.
 - **Weather** shares that top slot. With a Claude subscription the slot
   alternates between quota and current weather every few seconds; without one
   (no subscription, a lapsed login, no Claude Code at all) it just shows
-  weather. Set a location and it comes from open-meteo, no API key; set none
+  weather — temperature, conditions with a matching hand-drawn icon, the
+  day's high/low and feels-like. From open-meteo, no API key; set no location
   and the slot is simply empty.
 - **Uptime and load** — the 1, 5 and 15 minute averages, coloured against the
   thread count so they only light up when work is actually queuing.
