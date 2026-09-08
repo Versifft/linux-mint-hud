@@ -171,6 +171,10 @@ text.
 
 ## Weather
 
+<img src="docs/weather-states.png" alt="Six example weather cards: Reykjavík light snow, Lisbon clear, London rain, Singapore thunderstorm, Bergen fog, Nairobi partly cloudy — each with a hand-drawn icon, temperature, condition, and high/low/feels.">
+
+*(example locations — the icon follows the WMO weather code)*
+
 The installer offers to set a location; otherwise create `weather.json` in the
 repo yourself:
 
