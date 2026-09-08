@@ -4,9 +4,10 @@ A system panel that lives on the desktop. One Python process reads every
 metric from `/proc` and `/sys`, draws the whole panel with Pillow, and paints
 it into its own desktop window through GTK and cairo. It sits below your
 windows, on every workspace, and clicks fall straight through it to the
-desktop underneath.
+desktop underneath. The top slot shows Claude plan quota, weather, or
+alternates between the two.
 
-<img src="docs/hero-mint.jpg" alt="The panel on a Linux Mint desktop, top-right corner, over the default Mint wallpaper — showing Claude quota, ring gauges, history charts, and the power and process sections.">
+<img src="docs/hero-desktops.jpg" alt="Two Linux Mint desktops side by side, each with the panel in the top-right corner. On the left the top of the panel shows Claude plan quota; on the right, over an ocean wallpaper, it shows local weather. Below that both show the CPU/GPU/RAM gauges, history, and the memory, disk, network, power and process sections.">
 
 ## What it shows
 
@@ -84,12 +85,12 @@ behind it.
 
 <table>
 <tr>
-<td width="50%"><img src="docs/desktop-jpanchal.jpg" alt="the panel over a gold abstract wallpaper"></td>
-<td width="50%"><img src="docs/desktop-mfakurian.jpg" alt="the panel over a purple and cyan abstract wallpaper"></td>
+<td width="50%"><img src="docs/desktop-1.jpg" alt="the panel over a gold wallpaper, top slot showing weather for Marrakesh"></td>
+<td width="50%"><img src="docs/desktop-2.jpg" alt="the panel over a purple and cyan wallpaper, top slot showing Claude quota"></td>
 </tr>
 <tr>
-<td width="50%"><img src="docs/desktop-ocean.jpg" alt="the panel over a blue ocean-wave wallpaper"></td>
-<td width="50%"><img src="docs/desktop-jleung.jpg" alt="the panel over a teal confetti wallpaper"></td>
+<td width="50%"><img src="docs/desktop-3.jpg" alt="the panel over a teal confetti wallpaper, top slot showing weather for Reykjavík"></td>
+<td width="50%"><img src="docs/desktop-4.jpg" alt="the panel over a warm dawn wallpaper, top slot showing Claude quota"></td>
 </tr>
 </table>
 
