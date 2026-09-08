@@ -12,8 +12,12 @@ desktop underneath.
 
 - **Claude plan quota** — session and weekly usage, read from the endpoint
   claude.ai's own settings page uses. The session window counts down; the
-  weekly one names a weekday and time. Optional — the section simply isn't
-  drawn on a machine without Claude Code.
+  weekly one names a weekday and time.
+- **Weather** shares that top slot. With a Claude subscription the slot
+  alternates between quota and current weather every few seconds; without one
+  (no subscription, a lapsed login, no Claude Code at all) it just shows
+  weather. Set a location and it comes from open-meteo, no API key; set none
+  and the slot is simply empty.
 - **Uptime and load** — the 1, 5 and 15 minute averages, coloured against the
   thread count so they only light up when work is actually queuing.
 - **CPU, GPU and RAM** — ring gauges, a strip with one column per logical
@@ -63,6 +67,7 @@ across the gaps between sections rather than leaving a hole at the bottom.
 | `install.sh` | guided installer — dependencies, fonts, autostart |
 | `bootstrap.sh` | clone + install, for the one-liner |
 | `claude_quota.py` | Claude plan quota from claude.ai |
+| `weather.py` | current weather from open-meteo (reads `weather.json`) |
 | `browser_cookie.py` | reads the session cookie from the running browser — Firefox first, then Chromium |
 | `chromium_cookies.py` | the Chromium half: decrypts its cookie store via the desktop keyring |
 | `99-rapl-psys.rules` | optional udev rule for the system-power reading |
@@ -162,6 +167,19 @@ print('saved from', p, '- length:', len(cookie))
 
 Delete the `.har` afterwards — it contains your full session cookie in plain
 text.
+
+## Weather
+
+The installer offers to set a location; otherwise create `weather.json` in the
+repo yourself:
+
+```
+{"lat": 47.01, "lon": 7.69, "name": "Lützelflüh"}
+```
+
+open-meteo needs no key, and once the coordinates are set nothing identifying
+is sent — no IP geolocation. The file is gitignored, so your location stays
+local. With no `weather.json` the weather slot is simply not shown.
 
 ## Running it
 

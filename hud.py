@@ -172,6 +172,15 @@ def load_color(v, ncpu):
     return DIM
 
 
+def weather_hue(t):
+    """Temperature colour, cold to hot, from the existing palette."""
+    if t <= 0:   return ACCENT
+    if t <= 10:  return TEAL
+    if t <= 20:  return GREEN
+    if t <= 27:  return AMBER
+    return CRIT
+
+
 def state_color(pct, base=ACCENT):
     """Each domain keeps its own hue until it runs hot; red and amber are
     reserved for load, so a colour change always means something."""
@@ -1127,6 +1136,7 @@ def render(write_png=True):
 
     claude_quota = cached_cmd("claude_quota", [f"{CONF_DIR}/claude_quota.py"], 300,
                               ok_prefix="Session")
+    weather_raw = cached_cmd("weather", [f"{CONF_DIR}/weather.py"], 900, ok_prefix="{")
 
     # ---- history
     if not HISTORY:
@@ -1167,53 +1177,76 @@ def render(write_png=True):
     f_val_sm = F(MONO_REG, T_BODY)
     f_big    = F(MONO_LIGHT, T_LEAD)
 
-    # ============ CLAUDE =========================================
-    # Silence from claude_quota.py means there is no Claude on this machine —
-    # no CLI installed — so the section is left out rather than parked on an
-    # error message forever. A non-empty line is worth showing even when it is
-    # a failure, because those are the actionable ones.
-    if claude_quota.strip():
-        # It sits at the top of the panel, so it gets a heavier title and
-        # larger figures than the sections below it.
+    # ============ TOP SLOT: CLAUDE / WEATHER ======================
+    # Claude quota when there is a subscription to report on; weather when
+    # there is not (no CLI, no Pro/Max, a lapsed login). When BOTH are
+    # available the slot alternates between them every ALT_PERIOD seconds —
+    # no hover, because the panel takes no mouse events by design; the switch
+    # is on a wall-clock timer, so it just cycles on its own.
+    sess = week = None
+    if "Session" in claude_quota:
+        try:
+            for part in [p.strip() for p in claude_quota.split("|")]:
+                pct = int(part.split("%")[0].split()[-1])
+                rest = part.split("(")[1].rstrip(")") if "(" in part else ""
+                if part.startswith("Session"):
+                    sess = (pct, rest)
+                elif part.startswith("Week"):
+                    week = (pct, rest)
+        except Exception:
+            pass
+    have_claude = bool(sess or week)
+
+    weather = None
+    if weather_raw.strip().startswith("{"):
+        try:
+            weather = json.loads(weather_raw)
+        except Exception:
+            pass
+    have_weather = weather is not None
+
+    ALT_PERIOD = 8
+    if have_claude and have_weather:
+        slot = "weather" if int(time.time() // ALT_PERIOD) % 2 else "claude"
+    elif have_claude:
+        slot = "claude"
+    elif have_weather:
+        slot = "weather"
+    else:
+        slot = None
+
+    if slot == "claude":
+        # heavier title and larger figures than the sections below it
         label(d, PAD, y, "claude", CORAL, tracking=2.4)
         y += 23
-
-        sess = week = None
-        if "Session" in claude_quota:
-            try:
-                for part in [p.strip() for p in claude_quota.split("|")]:
-                    pct = int(part.split("%")[0].split()[-1])
-                    rest = part.split("(")[1].rstrip(")") if "(" in part else ""
-                    if part.startswith("Session"):
-                        sess = (pct, rest)
-                    elif part.startswith("Week"):
-                        week = (pct, rest)
-            except Exception:
-                pass
-
-        if sess or week:
-            for name, item in (("session", sess), ("week", week)):
-                if not item:
-                    continue
-                pct, resets = item
-                f_pct = F(MONO_MED, T_VALUE)
-                label(d, PAD, y + 3, name, CORAL, size=T_MICRO)
-                text(d, R, y, f"{pct}%", f_pct, CORAL, anchor="r")
-                # reset time on the same line, left of the percentage; the smaller
-                # font needs the offset to sit on the same baseline
-                text(d, R - measure(f_pct, f"{pct}%") / SS - 11, y + 3,
-                     # the "in" belongs to the payload now: the session window
-                     # reads "in 2h06m", the weekly one "friday 10:59"
-                     f"resets {resets}", F(UI_MED, T_BODY), DIM, anchor="r")
-                y += 19
-                bar(img, PAD, y, CW, 8, pct / 100, ramp=True)
-                y += 17
-        else:
-            # only reached with a non-empty line that did not parse as quota,
-            # i.e. one of the reasons from claude_quota.py
-            text(d, PAD, y, claude_quota, F(UI_MED, T_BODY), DIM)
-            y += 16
-    y += gap(30)
+        for name, item in (("session", sess), ("week", week)):
+            if not item:
+                continue
+            pct, resets = item
+            f_pct = F(MONO_MED, T_VALUE)
+            label(d, PAD, y + 3, name, CORAL, size=T_MICRO)
+            text(d, R, y, f"{pct}%", f_pct, CORAL, anchor="r")
+            text(d, R - measure(f_pct, f"{pct}%") / SS - 11, y + 3,
+                 f"resets {resets}", F(UI_MED, T_BODY), DIM, anchor="r")
+            y += 19
+            bar(img, PAD, y, CW, 8, pct / 100, ramp=True)
+            y += 17
+        y += gap(30)
+    elif slot == "weather":
+        label(d, PAD, y, "weather", ACCENT, tracking=2.4)
+        if weather.get("name"):
+            label_r(d, R, y, weather["name"], DIM, size=T_MICRO)
+        y += 25
+        t = weather["temp"]
+        ttxt = f"{t}°"
+        text(d, PAD, y, ttxt, f_big, weather_hue(t))
+        text(d, PAD + measure(f_big, ttxt) / SS + 12, y + 8, weather["desc"],
+             F(UI_MED, T_BODY), DIM)
+        y += 30
+        detail = f"H {weather['hi']}°   L {weather['lo']}°   feels {weather['feels']}°"
+        text(d, PAD, y, detail, F(UI_MED, T_BODY), MUTE)
+        y += 16
+        y += gap(30)
 
     # ============ HEADER =========================================
     label(d, PAD, y, "uptime", ACCENT)

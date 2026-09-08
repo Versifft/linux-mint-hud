@@ -9,3 +9,6 @@ __pycache__/
 # Local editor/OS noise
 *.swp
 *~
+
+# Local weather location (personal); set per-machine.
+weather.json

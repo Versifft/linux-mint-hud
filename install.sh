@@ -75,6 +75,37 @@ if [ ${#extra_missing[@]} -gt 0 ]; then
     echo
 fi
 
+# ---- 2b. weather location -----------------------------------------------
+if [ ! -f "$HERE/weather.json" ]; then
+    bold "Weather"
+    info "When Claude quota is unavailable the top slot can show local weather"
+    info "instead (from open-meteo, no API key). Set a location to enable it."
+    if ask "Set a weather location?" n; then
+        read -r -p "  Town or city: " town </dev/tty
+        if [ -n "$town" ]; then
+            # geocode via open-meteo, no key, then store only the coordinates
+            python3 - "$town" "$HERE/weather.json" <<'PY'
+import json, sys, urllib.parse, urllib.request
+town, out = sys.argv[1], sys.argv[2]
+url = "https://geocoding-api.open-meteo.com/v1/search?count=1&name=" + urllib.parse.quote(town)
+try:
+    d = json.load(urllib.request.urlopen(url, timeout=8))
+    r = d["results"][0]
+    with open(out, "w") as f:
+        json.dump({"lat": r["latitude"], "lon": r["longitude"], "name": r["name"]}, f)
+    print(f"  set: {r['name']}, {r.get('admin1','')} {r['country_code']}")
+except Exception:
+    print("  couldn't find that place — weather stays off (edit weather.json later)")
+PY
+        else
+            info "Skipped."
+        fi
+    else
+        info "Skipped — no weather shown."
+    fi
+    echo
+fi
+
 # ---- 3. fonts ------------------------------------------------------------
 bold "Fonts"
 # capture once and match with here-strings: piping fc-list into grep -q makes
