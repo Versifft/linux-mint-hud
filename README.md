@@ -17,21 +17,24 @@ alternates between the two.
 - **Weather** shares that top slot. With a Claude subscription the slot
   alternates between quota and current weather every few seconds; without one
   (no subscription, a lapsed login, no Claude Code at all) it just shows
-  weather — temperature, conditions with a matching hand-drawn icon, the
-  day's high/low and feels-like. From open-meteo, no API key; set no location
-  and the slot is simply empty.
+  weather — a hand-drawn icon for the sky, the temperature large, and the
+  day's min, max and feels-like, each tinted by how cold or hot it is. From
+  open-meteo, no API key; set no location and the slot is simply empty.
 - **Uptime and load** — the 1, 5 and 15 minute averages, coloured against the
   thread count so they only light up when work is actually queuing.
 - **CPU, GPU and RAM** — ring gauges, a strip with one column per logical
   core, and an hour-long history where the GPU rides along as a line over the
   CPU columns.
-- **Memory, swap and disk**, with the NVMe and wifi temperatures beside the
-  thing they measure.
+- **Thermals** — the CPU package, SSD and wifi-radio temperatures on one line,
+  each on a green-to-red gradient, so a cool part reads calm and a hot one
+  stands out.
+- **Memory, swap and disk** usage.
 - **Network** — one chart, download above the axis and upload below it.
 - **Power** — what the machine draws and, while charging, what the wall
   delivers on top of that, coloured by where the energy is coming from. On
   mains it reads full system power from Intel RAPL when that is permitted (see
-  the installer); otherwise it falls back to what the battery reports.
+  the installer); otherwise it falls back to what the battery reports. The
+  battery line carries its charge, direction and terminal voltage.
 - **Top three processes** by CPU and by memory.
 
 ## Power states
@@ -86,11 +89,11 @@ behind it.
 <table>
 <tr>
 <td width="50%"><img src="docs/desktop-1.jpg" alt="the panel over a gold wallpaper, top slot showing weather for Marrakesh"></td>
-<td width="50%"><img src="docs/desktop-2.jpg" alt="the panel over a purple and cyan wallpaper, top slot showing Claude quota"></td>
+<td width="50%"><img src="docs/desktop-2.jpg" alt="the panel over a purple 3D-cubes wallpaper, top slot showing Claude quota"></td>
 </tr>
 <tr>
 <td width="50%"><img src="docs/desktop-3.jpg" alt="the panel over a teal confetti wallpaper, top slot showing weather for Reykjavík"></td>
-<td width="50%"><img src="docs/desktop-4.jpg" alt="the panel over a warm dawn wallpaper, top slot showing Claude quota"></td>
+<td width="50%"><img src="docs/desktop-4.jpg" alt="the panel over a dark charcoal wallpaper with the Mint logo, top slot showing Claude quota"></td>
 </tr>
 </table>
 

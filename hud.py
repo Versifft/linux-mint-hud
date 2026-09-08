@@ -103,7 +103,6 @@ def gap(base):
 
 # ---------------------------------------------------------------- palette
 TEXT      = (233, 238, 245)
-DIM       = (150, 161, 177)
 MUTE      = (104, 116, 133)
 STEEL     = (116, 129, 149)
 # quota ramp: green -> amber -> red. Routed through amber because a straight
@@ -131,6 +130,7 @@ CORAL     = (224, 128, 93)
 AMBER     = (240, 176, 80)
 GREEN     = (72, 199, 116)
 DARKRED   = (186, 66, 66)
+RED       = (233, 84, 82)     # thermals title — heat, and clear of CORAL/PINK
 
 # Power direction, stored per history sample. Three states rather than a
 # boolean: a full battery on AC is neither charging nor discharging, and
@@ -157,6 +157,36 @@ def ramp_rgb(t):
     return RAMP[-1][1]
 
 
+# Air temperature to colour, by human comfort/danger rather than by a device's
+# thermal limit (temp_gradient does that). Both extremes are hazardous, so it
+# is two-sided: deep cold reads icy blue, heat reads amber then red, and an
+# ordinary comfortable range stays plain white so it does not cry wolf.
+WEATHER_TEMP_STOPS = (
+    (-15, (128, 158, 255)),   # extreme cold  — saturated icy blue
+    (-5,  (108, 178, 255)),   # cold          — blue
+    (4,   (168, 206, 248)),   # chilly        — pale blue
+    (13,  TEXT),              # comfortable   — white
+    (25,  TEXT),              # comfortable   — white
+    (31,  (240, 176, 80)),    # warm          — amber
+    (37,  (246, 105, 64)),    # hot           — orange-red
+    (43,  (222, 42, 52)),     # dangerous heat— red
+)
+
+
+def weather_temp_color(c):
+    """Colour for an air temperature in degrees Celsius (see WEATHER_TEMP_STOPS)."""
+    stops = WEATHER_TEMP_STOPS
+    if c <= stops[0][0]:
+        return stops[0][1]
+    if c >= stops[-1][0]:
+        return stops[-1][1]
+    for (t0, c0), (t1, c1) in zip(stops, stops[1:]):
+        if c <= t1:
+            k = (c - t0) / (t1 - t0) if t1 > t0 else 0.0
+            return tuple(int(a + (b - a) * k) for a, b in zip(c0, c1))
+    return stops[-1][1]
+
+
 def load_color(v, ncpu):
     """Load average against the thread count. Below it there is headroom and
     everything runs when it wants to; at it the machine is saturated; above it
@@ -169,7 +199,7 @@ def load_color(v, ncpu):
         return CRIT
     if v >= ncpu:
         return WARN
-    return DIM
+    return TEXT
 
 
 def state_color(pct, base=ACCENT):
@@ -352,6 +382,10 @@ def draw_weather_icon(img, cx, cy, s, code):
         for i in range(3):
             yy = C + R * (0.7 + i * 0.42)
             d.line([(C - R * 1.4, yy), (C + R * 1.4, yy)], fill=(*CLOUD, 200), width=int(gs * 1.3))
+    elif grp == "cloud":
+        # no precipitation hanging below, so centre the cloud in the tile
+        # instead of leaving it floating high with an empty lower half
+        cloud(C, C, R * 0.85)
     else:
         cloud(C, C - R * 0.35, R * 0.85)
         base = C + R * 0.7
@@ -883,14 +917,15 @@ def temps():
     return tuple(v / 1000 if v else None for v in (cpu, nvme, wifi))
 
 
-def temp_color(t, warn, crit):
+def temp_gradient(t, warn, crit):
+    """Smooth green->amber->red for a device temperature, on the app's own
+    quota/battery ramp. warn lands on amber and crit on red, with an equal span
+    below warn fading down to green, so a cool part reads calm rather than
+    stepping between flat colours."""
     if t is None:
         return MUTE
-    if t >= crit:
-        return CRIT
-    if t >= warn:
-        return WARN
-    return DIM
+    pos = 0.5 + 0.5 * (t - warn) / (crit - warn)
+    return ramp_rgb(pos)
 
 
 _RAPL = None
@@ -948,7 +983,7 @@ def rapl_watts(prev_uj, elapsed):
 def battery():
     bat = battery_path()
     if not bat:
-        return 0, "no battery", 0.0, None
+        return 0, "no battery", 0.0, None, 0.0
     cap = read_first(f"{bat}/capacity", int, 0)
     status = read_first(f"{bat}/status", default="Unknown")
     cur = read_first(f"{bat}/current_now", int, 0) or 0
@@ -962,7 +997,7 @@ def battery():
             eta = now / cur * 3600
         elif status == "Charging" and full > now:
             eta = (full - now) / cur * 3600
-    return cap, status, watts, eta
+    return cap, status, watts, eta, volt / 1e6
 
 
 def top_procs(prev, elapsed):
@@ -1159,7 +1194,7 @@ def render(write_png=True):
     rd = max(0.0, (dr - prev.get("dr", dr)) / elapsed)
     wr = max(0.0, (dw - prev.get("dw", dw)) / elapsed)
 
-    cap, bstatus, batt_w, eta = battery()
+    cap, bstatus, batt_w, eta, batt_v = battery()
     watts = batt_w
     # One consistent basis for the whole chart when RAPL is readable: the
     # battery figure drops to zero on mains, which is a measurement gap, not
@@ -1295,29 +1330,54 @@ def render(write_png=True):
             label(d, PAD, y + 3, name, CORAL, size=T_MICRO)
             text(d, R, y, f"{pct}%", f_pct, CORAL, anchor="r")
             text(d, R - measure(f_pct, f"{pct}%") / SS - 11, y + 3,
-                 f"resets {resets}", F(UI_MED, T_BODY), DIM, anchor="r")
+                 f"resets {resets}", F(UI_MED, T_BODY), TEXT, anchor="r")
             y += 19
             bar(img, PAD, y, CW, 8, pct / 100, ramp=True)
             y += 17
     elif slot == "weather":
         label(d, PAD, y, "weather", ACCENT, tracking=2.4)
         if weather.get("name"):
-            label_r(d, R, y, weather["name"], DIM, size=T_MICRO)
+            label_r(d, R, y, weather["name"], TEXT, size=T_MICRO)
         t = weather["temp"]
-        icon_cy = slot_start + 50
-        draw_weather_icon(img, PAD + 17, icon_cy, 14, weather.get("code", 3))
-        tx = PAD + 44
+        # Hero band: a large icon and big white temperature, centred as a group
+        # in the middle of the slot. No condition text — the icon already says
+        # what the sky is doing, so the space goes to making the reading big and
+        # legible instead. The detail row is pinned to the bottom, so the slot
+        # fills its fixed 95px top-to-bottom rather than clustering under the
+        # title the way it used to.
+        f_temp = F(MONO_LIGHT, T_HERO)
+        icon_s = 22
         ttxt = f"{t}°"
-        # temperatures all in plain white; the condition sits large next to it
-        text(d, tx, icon_cy - 16, ttxt, f_big, TEXT)
-        text(d, tx + measure(f_big, ttxt) / SS + 13, icon_cy - 13,
-             weather["desc"], F(UI_MED, T_LEAD), DIM)
-        detail = f"H {weather['hi']}°    L {weather['lo']}°    feels {weather['feels']}°"
-        text(d, PAD, slot_start + 74, detail, F(UI_MED, T_BODY), TEXT)
+        tw = measure(f_temp, ttxt) / SS
+        iw = icon_s * 2.5          # icon glyph's visual width
+        gap_it = 14
+        group_w = iw + gap_it + tw
+        gx = PAD + (CW - group_w) / 2.0
+        hero_cy = slot_start + 46
+        draw_weather_icon(img, gx + iw / 2, hero_cy, icon_s, weather.get("code", 3))
+        text(d, gx + iw + gap_it, hero_cy - 21, ttxt, f_temp, TEXT)
+        # Detail row: three stats spread across the width, pinned near the
+        # bottom, each a small-caps label paired with a value — all white.
+        dy = slot_start + 80
+        f_dv = F(MONO_REG, T_VALUE)
+        f_dl = F(UI_SEMI, T_MICRO)
+        cells = (("min", weather['lo']), ("max", weather['hi']),
+                 ("feels", weather['feels']))
+        colw = CW / 3.0
+        for i, (lab, tval) in enumerate(cells):
+            val = f"{tval}°"
+            vcol = weather_temp_color(tval)
+            cx = PAD + colw * (i + 0.5)
+            lw = measure(f_dl, lab.upper(), 1.4) / SS
+            vw = measure(f_dv, val) / SS
+            gap_lv = 7
+            x0 = cx - (lw + gap_lv + vw) / 2.0
+            text(d, x0, dy + 3, lab.upper(), f_dl, TEXT, tracking=1.4)
+            text(d, x0 + lw + gap_lv, dy, val, f_dv, vcol)
 
     if slot:
         y = slot_start + SLOT_H
-        y += gap(30)
+        y += gap(26)
 
     # ============ HEADER =========================================
     label(d, PAD, y, "uptime", ACCENT)
@@ -1355,30 +1415,26 @@ def render(write_png=True):
         bw, uw = measure(f_g, big) / SS, measure(f_u, unit) / SS
         x0 = cx - (bw + 2 + uw) / 2
         text(d, x0, cy - 18, big, f_g, TEXT)
-        text(d, x0 + bw + 3, cy - 6, unit, f_u, DIM)
+        text(d, x0 + bw + 3, cy - 6, unit, f_u, TEXT)
         # centring a letterspaced label means measuring it with the tracking in
         lw = measure(F(UI_SEMI, T_LABEL), name.upper(), 1.8) / SS
         label(d, cx - lw / 2, cy + gr + 10, name, hue, tracking=1.8)
-    y += 2 * gr + gap(32)
+    y += 2 * gr + gap(36)
 
     # ============ PER-CORE =======================================
     label(d, PAD, y, "cores", ACCENT)
     rx_ = R
-    if cpu_t:
-        t = f"{cpu_t:.0f}°C"
-        text(d, rx_, y - 1, t, F(MONO_REG, T_BODY), temp_color(cpu_t, 80, 95), anchor="r")
-        rx_ -= measure(F(MONO_REG, T_BODY), t) / SS + 12
     clock = f"{cpu_freq_ghz():.2f} GHz"
-    text(d, rx_, y - 1, clock, F(MONO_REG, T_BODY), DIM, anchor="r")
+    text(d, rx_, y - 1, clock, F(MONO_REG, T_BODY), TEXT, anchor="r")
     rx_ -= measure(F(MONO_REG, T_BODY), clock) / SS + 12
-    label_r(d, rx_, y, f"{len(core_loads)} threads", DIM)
+    label_r(d, rx_, y, f"{len(core_loads)} threads", TEXT)
     y += 15
     core_strip(img, PAD, y, CW, 24, core_loads)
-    y += 24 + gap(26)
+    y += 24 + gap(14)
 
     # ============ CPU / GPU HISTORY ==============================
     label(d, PAD, y, "history", ACCENT)
-    label_r(d, R, y, "60 min", DIM)
+    label_r(d, R, y, "60 min", TEXT)
     y += 15
     histogram(img, PAD, y, CW, 64, "cpu", ACCENT, floor=10, clamp=100,
               overlay="gpu", overlay_color=VIOLET)
@@ -1390,7 +1446,35 @@ def render(write_png=True):
         # the swatch is small
         text(d, lx + 12, y, txt, F(UI_MED, T_LABEL), col)
         lx += 12 + measure(F(UI_MED, T_LABEL), txt) / SS + 18
-    y += gap(24)
+    y += 24
+
+    # ============ THERMALS =======================================
+    # The three device sensors this machine actually labels — CPU package, the
+    # SSD and the wifi radio — shown together, sitting under the history so the
+    # reading is the system's thermal picture rather than a lone CPU number.
+    # Values ride the green->amber->red gradient by how close each is to its own
+    # warn/crit, so a cool part reads calm and a hot one stands out.
+    therms = (("cpu", cpu_t, 80, 95), ("ssd", nvme_t, 65, 75),
+              ("wifi", wifi_t, 75, 85))
+    f_tl, f_tv = F(UI_SEMI, T_MICRO), F(MONO_REG, T_BODY)
+    groups = []
+    for lab, tv, warn, crit in therms:
+        if tv is None:
+            continue
+        val = f"{tv:.0f}°"
+        lw = measure(f_tl, lab.upper(), 1.4) / SS
+        vw = measure(f_tv, val) / SS
+        groups.append((lab.upper(), lw, val, vw, temp_gradient(tv, warn, crit)))
+    if groups:
+        label(d, PAD, y, "thermals", RED)
+        gap_lv, gap_gg = 6, 20
+        total = sum(lw + gap_lv + vw for _, lw, _, vw, _ in groups) + gap_gg * (len(groups) - 1)
+        gx = R - total
+        for labu, lw, val, vw, col in groups:
+            text(d, gx, y + 1, labu, f_tl, TEXT, tracking=1.4)
+            text(d, gx + lw + gap_lv, y - 1, val, f_tv, col)
+            gx += lw + gap_lv + vw + gap_gg
+    y += gap(33)
 
     # ============ MEMORY =========================================
     mfrac = mem_used / mem_total
@@ -1403,7 +1487,7 @@ def render(write_png=True):
     if swap_total:
         sfrac = swap_used / swap_total
         label(d, PAD, y, "swap", TEAL, size=T_MICRO)
-        text(d, R, y - 2, f"{fmt_bytes(swap_used)} / {fmt_bytes(swap_total)}", f_val_sm, DIM, anchor="r")
+        text(d, R, y - 2, f"{fmt_bytes(swap_used)} / {fmt_bytes(swap_total)}", f_val_sm, TEXT, anchor="r")
         y += 14
         bar(img, PAD, y, CW, 4, sfrac, state_color(sfrac * 100, TEAL))
         y += 8
@@ -1412,32 +1496,23 @@ def render(write_png=True):
     # ============ DISK ===========================================
     dfrac = disk_used / disk_total
     label(d, PAD, y, "disk", PINK)
-    if nvme_t:
-        # sits where the mount point used to; the panel only ever shows /
-        text(d, PAD + measure(F(UI_SEMI, T_LABEL), "DISK", 1.6) / SS + 11, y - 1,
-             f"{nvme_t:.0f}°C", F(MONO_REG, T_BODY), temp_color(nvme_t, 65, 75))
     text(d, R, y - 2, f"{fmt_bytes(disk_used)} / {fmt_bytes(disk_total)}", f_val, TEXT, anchor="r")
     y += 16
     bar(img, PAD, y, CW, 6, dfrac, state_color(dfrac * 100, PINK))
     y += 15
-    text(d, PAD, y, "read", F(UI_MED, T_BODY), DIM)
-    text(d, PAD + 34, y, fmt_bytes(rd, True), f_val_sm, DIM)
-    text(d, R, y, fmt_bytes(wr, True), f_val_sm, DIM, anchor="r")
-    text(d, R - measure(f_val_sm, fmt_bytes(wr, True)) / SS - 9, y, "write", F(UI_MED, T_BODY), DIM, anchor="r")
+    text(d, PAD, y, "read", F(UI_MED, T_BODY), TEXT)
+    text(d, PAD + 34, y, fmt_bytes(rd, True), f_val_sm, TEXT)
+    text(d, R, y, fmt_bytes(wr, True), f_val_sm, TEXT, anchor="r")
+    text(d, R - measure(f_val_sm, fmt_bytes(wr, True)) / SS - 9, y, "write", F(UI_MED, T_BODY), TEXT, anchor="r")
     y += gap(30)
 
     # ============ NETWORK ========================================
     label(d, PAD, y, "network", ACCENT)
-    if wifi_t:
-        # radio temperature, placed like the disk one. The interface itself is
-        # detected from the default route and no longer spelled out here.
-        text(d, PAD + measure(F(UI_SEMI, T_LABEL), "NETWORK", 1.6) / SS + 11, y - 1,
-             f"{wifi_t:.0f}°C", F(MONO_REG, T_BODY), temp_color(wifi_t, 75, 85))
     y += 16
     peak = net_chart(img, PAD, y, CW, 60, ACCENT, CORAL, floor=64 * 1024)
     y += 60 + 6
     text(d, PAD, y, f"↓ {fmt_bytes(down, True)}", f_val_sm, ACCENT)
-    text(d, W / 2, y, f"peak {fmt_bytes(peak, True)}", F(MONO_REG, T_LABEL), DIM, anchor="c")
+    text(d, W / 2, y, f"peak {fmt_bytes(peak, True)}", F(MONO_REG, T_LABEL), TEXT, anchor="c")
     text(d, R, y, f"↑ {fmt_bytes(up, True)}", f_val_sm, CORAL, anchor="r")
     y += gap(30)
 
@@ -1455,18 +1530,18 @@ def render(write_png=True):
         # green charge, and painting it amber made the two figures blur together
         text(d, ux, y - 2, atxt, f_val, TEXT, anchor="r")
         ux -= measure(f_val, atxt) / SS + 6
-        label_r(d, ux, y, "ac", DIM, size=T_MICRO)
+        label_r(d, ux, y, "ac", TEXT, size=T_MICRO)
         ux -= measure(F(UI_SEMI, T_MICRO), "AC", 1.6) / SS + 14
     dtxt = f"{watts:.1f} W"
     text(d, ux, y - 2, dtxt, f_val, consumption_color(1.0 if bstatus != "Discharging" else 0.0)
          if watts > 0.05 else MUTE, anchor="r")
     ux -= measure(f_val, dtxt) / SS + 6
-    label_r(d, ux, y, "device", DIM, size=T_MICRO)
+    label_r(d, ux, y, "device", TEXT, size=T_MICRO)
     ux -= measure(F(UI_SEMI, T_MICRO), "DEVICE", 1.6) / SS + 14
     # the battery fallback reads 0W on mains, which is a measurement gap rather
     # than an idle machine, and that is worth saying on the panel
     if power_src == "battery":
-        label_r(d, ux, y, "battery", DIM, size=T_MICRO)
+        label_r(d, ux, y, "battery", TEXT, size=T_MICRO)
     y += 16
     power_chart(img, PAD, y, CW, 30, floor=8)
     y += 30
@@ -1495,11 +1570,16 @@ def render(write_png=True):
         bcol = ramp_rgb(1 - cap / 100)
     else:
         bcol = STEEL          # on AC, holding below full (e.g. a charge limit)
-    scol = GREEN if (charging or full) else (DARKRED if bstatus == "Discharging" else DIM)
+    scol = GREEN if (charging or full) else (DARKRED if bstatus == "Discharging" else TEXT)
     label(d, PAD, y, "battery", AMBER)
+    if batt_v > 0.05:
+        # this pack has no temperature sensor, so the spot where the other
+        # sections carry their temperature carries the terminal voltage instead
+        text(d, PAD + measure(F(UI_SEMI, T_LABEL), "BATTERY", 1.6) / SS + 11, y - 1,
+             f"{batt_v:.1f} V", F(MONO_REG, T_BODY), TEXT)
     bx = R
     if eta:
-        text(d, bx, y - 1, fmt_dur(eta), F(MONO_REG, T_BODY), DIM, anchor="r")
+        text(d, bx, y - 1, fmt_dur(eta), F(MONO_REG, T_BODY), TEXT, anchor="r")
         bx -= measure(F(MONO_REG, T_BODY), fmt_dur(eta)) / SS + 12
     # power crossing the pack's own terminals, which belongs here rather than
     # in the POWER row: that one is about the machine and the wall.
@@ -1538,14 +1618,14 @@ def render(write_png=True):
         bar is doing shape rather than measurement."""
         label(d, PAD, y, title, hue, tracking=1.7)
         if right:
-            label_r(d, R, y, right, DIM, size=T_MICRO)
+            label_r(d, R, y, right, TEXT, size=T_MICRO)
         y += 18
         peak = total if total else max([value_of(r) for r in rows] + [1e-9])
         for i, r in enumerate(rows):
             col = colour_of(r)
             row_bar(img, PAD, y - 4, CW, 20,
                     max(0.0, min(1.0, value_of(r) / peak)) ** curve, col)
-            text(d, PAD + 7, y, r[0][:22], F(UI_MED, T_BODY), TEXT if i == 0 else DIM)
+            text(d, PAD + 7, y, r[0][:22], F(UI_MED, T_BODY), TEXT)
             text(d, R - 7, y, fmt_of(r),
                  F(MONO_MED, T_BODY) if i == 0 else F(MONO_REG, T_BODY), col, anchor="r")
             y += 22
