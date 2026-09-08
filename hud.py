@@ -172,15 +172,6 @@ def load_color(v, ncpu):
     return DIM
 
 
-def weather_hue(t):
-    """Temperature colour, cold to hot, from the existing palette."""
-    if t <= 0:   return ACCENT
-    if t <= 10:  return TEAL
-    if t <= 20:  return GREEN
-    if t <= 27:  return AMBER
-    return CRIT
-
-
 def state_color(pct, base=ACCENT):
     """Each domain keeps its own hue until it runs hot; red and amber are
     reserved for load, so a colour change always means something."""
@@ -1317,11 +1308,12 @@ def render(write_png=True):
         draw_weather_icon(img, PAD + 17, icon_cy, 14, weather.get("code", 3))
         tx = PAD + 44
         ttxt = f"{t}°"
-        text(d, tx, icon_cy - 16, ttxt, f_big, weather_hue(t))
-        text(d, tx + measure(f_big, ttxt) / SS + 13, icon_cy - 7,
-             weather["desc"], F(UI_MED, T_BODY), DIM)
+        # temperatures all in plain white; the condition sits large next to it
+        text(d, tx, icon_cy - 16, ttxt, f_big, TEXT)
+        text(d, tx + measure(f_big, ttxt) / SS + 13, icon_cy - 13,
+             weather["desc"], F(UI_MED, T_LEAD), DIM)
         detail = f"H {weather['hi']}°    L {weather['lo']}°    feels {weather['feels']}°"
-        text(d, PAD, slot_start + 74, detail, F(UI_MED, T_BODY), MUTE)
+        text(d, PAD, slot_start + 74, detail, F(UI_MED, T_BODY), TEXT)
 
     if slot:
         y = slot_start + SLOT_H
