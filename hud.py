@@ -48,7 +48,10 @@ DEFAULT_SETTINGS = {
     "disks": None,                 # mount points to show; None -> just "/"
     "sensors": None,               # temp-sensor ids for thermals; None -> auto
     "peripherals": None,           # peripheral-battery ids to show; None -> none
-    "sections": {"thermals": True, "network": True, "power": True, "processes": True},
+    "sections": {"top": True, "load": True, "gauges": True, "cores": True,
+                 "history": True, "thermals": True, "memory": True, "disk": True,
+                 "network": True, "power": True, "battery": True, "devices": True,
+                 "processes": True},
 }
 
 
@@ -1643,6 +1646,8 @@ def render(write_png=True):
         slot = "weather"
     else:
         slot = None
+    if not SECTIONS.get("top", True):
+        slot = None
 
     SLOT_H = 95
     slot_start = y
@@ -1698,66 +1703,70 @@ def render(write_png=True):
         y = slot_start + SLOT_H
         y += gap(26)
 
-    label(d, PAD, y, "uptime", ACCENT)
-    label_r(d, R, y, "load 1·5·15m", ACCENT)
-    y += 14
-    text(d, PAD, y, fmt_dur(uptime), f_big, TEXT)
-    f_load = F(MONO_REG, T_VALUE)
-    lx = R
-    for v in reversed(load):
-        text(d, lx, y + 6, v, f_load, load_color(float(v or 0), len(core_loads) or 1),
-             anchor="r")
-        lx -= measure(f_load, v) / SS + 9
-    y += gap(40)
+    if SECTIONS.get("load", True):
+        label(d, PAD, y, "uptime", ACCENT)
+        label_r(d, R, y, "load 1·5·15m", ACCENT)
+        y += 14
+        text(d, PAD, y, fmt_dur(uptime), f_big, TEXT)
+        f_load = F(MONO_REG, T_VALUE)
+        lx = R
+        for v in reversed(load):
+            text(d, lx, y + 6, v, f_load, load_color(float(v or 0), len(core_loads) or 1),
+                 anchor="r")
+            lx -= measure(f_load, v) / SS + 9
+        y += gap(40)
 
-    gr, gth = 46, 9
-    gauges = [("cpu", cpu_pct, ACCENT)]
-    if have_gpu:
-        gauges.append(("gpu", gpu_pct, VIOLET))
-    gauges.append(("ram", mem_used / mem_total * 100, TEAL))
-    slot = CW / len(gauges)
-    for i, (name, pct, hue) in enumerate(gauges):
-        cx = PAD + slot * (i + 0.5)
-        cy = y + gr + 4
-        col = state_color(pct, hue)
-        gauge(img, cx, cy, gr, gth, pct / 100, col)
-        big, unit = f"{pct:.0f}", "%"
-        f_g, f_u = F(MONO_LIGHT, T_HERO), F(MONO_REG, T_BODY)
-        bw, uw = measure(f_g, big) / SS, measure(f_u, unit) / SS
-        x0 = cx - (bw + 2 + uw) / 2
-        text(d, x0, cy - 18, big, f_g, TEXT)
-        text(d, x0 + bw + 3, cy - 6, unit, f_u, TEXT)
-        lw = measure(F(UI_SEMI, T_LABEL), name.upper(), 1.8) / SS
-        label(d, cx - lw / 2, cy + gr + 10, name, hue, tracking=1.8)
-    y += 2 * gr + gap(36)
+    if SECTIONS.get("gauges", True):
+        gr, gth = 46, 9
+        gauges = [("cpu", cpu_pct, ACCENT)]
+        if have_gpu:
+            gauges.append(("gpu", gpu_pct, VIOLET))
+        gauges.append(("ram", mem_used / mem_total * 100, TEAL))
+        slot = CW / len(gauges)
+        for i, (name, pct, hue) in enumerate(gauges):
+            cx = PAD + slot * (i + 0.5)
+            cy = y + gr + 4
+            col = state_color(pct, hue)
+            gauge(img, cx, cy, gr, gth, pct / 100, col)
+            big, unit = f"{pct:.0f}", "%"
+            f_g, f_u = F(MONO_LIGHT, T_HERO), F(MONO_REG, T_BODY)
+            bw, uw = measure(f_g, big) / SS, measure(f_u, unit) / SS
+            x0 = cx - (bw + 2 + uw) / 2
+            text(d, x0, cy - 18, big, f_g, TEXT)
+            text(d, x0 + bw + 3, cy - 6, unit, f_u, TEXT)
+            lw = measure(F(UI_SEMI, T_LABEL), name.upper(), 1.8) / SS
+            label(d, cx - lw / 2, cy + gr + 10, name, hue, tracking=1.8)
+        y += 2 * gr + gap(36)
 
-    label(d, PAD, y, "cores", ACCENT)
-    rx_ = R
-    ghz = cpu_freq_ghz()
-    if ghz > 0:
-        clock = f"{ghz:.2f} GHz"
-        text(d, rx_, y - 1, clock, F(MONO_REG, T_BODY), TEXT, anchor="r")
-        rx_ -= measure(F(MONO_REG, T_BODY), clock) / SS + 12
-    label_r(d, rx_, y, f"{len(core_loads)} threads", TEXT)
-    y += 15
-    core_strip(img, PAD, y, CW, 24, core_loads)
-    y += 24 + gap(14)
+    if SECTIONS.get("cores", True):
+        label(d, PAD, y, "cores", ACCENT)
+        rx_ = R
+        ghz = cpu_freq_ghz()
+        if ghz > 0:
+            clock = f"{ghz:.2f} GHz"
+            text(d, rx_, y - 1, clock, F(MONO_REG, T_BODY), TEXT, anchor="r")
+            rx_ -= measure(F(MONO_REG, T_BODY), clock) / SS + 12
+        label_r(d, rx_, y, f"{len(core_loads)} threads", TEXT)
+        y += 15
+        core_strip(img, PAD, y, CW, 24, core_loads)
+        y += 24 + gap(14)
 
-    label(d, PAD, y, "history", ACCENT)
-    label_r(d, R, y, "60 min", TEXT)
-    y += 15
-    histogram(img, PAD, y, CW, 64, "cpu", ACCENT, floor=10, clamp=100,
-              overlay="gpu" if have_gpu else None, overlay_color=VIOLET)
-    y += 64 + 7
-    if have_gpu:
-        lx = PAD
-        for col, txt in ((ACCENT, "cpu"), (VIOLET, "gpu")):
-            swatch(d, lx, y, col)
-            text(d, lx + 12, y, txt, F(UI_MED, T_LABEL), col)
-            lx += 12 + measure(F(UI_MED, T_LABEL), txt) / SS + 18
-        y += 24
-    else:
-        y += 6
+    if SECTIONS.get("history", True):
+        label(d, PAD, y, "history", ACCENT)
+        label_r(d, R, y, "60 min", TEXT)
+        y += 15
+        histogram(img, PAD, y, CW, 64, "cpu", ACCENT, floor=10, clamp=100,
+                  overlay="gpu" if have_gpu else None, overlay_color=VIOLET)
+        y += 64 + 7
+        if have_gpu:
+            lx = PAD
+            for col, txt in ((ACCENT, "cpu"), (VIOLET, "gpu")):
+                swatch(d, lx, y, col)
+                text(d, lx + 12, y, txt, F(UI_MED, T_LABEL), col)
+                lx += 12 + measure(F(UI_MED, T_LABEL), txt) / SS + 18
+            y += 24
+        else:
+            y += 6
 
     sel = _s.get("sensors")
     if sel:
@@ -1788,54 +1797,55 @@ def render(write_png=True):
             gx += lw + gap_lv + vw + gap_gg
         y += gap(33)
 
-    mfrac = mem_used / mem_total
-    label(d, PAD, y, "memory", TEAL)
-    text(d, R, y - 2, f"{fmt_bytes(mem_used)} / {fmt_bytes(mem_total)}", f_val, TEXT, anchor="r")
-    y += 16
-    bar(img, PAD, y, CW, 6, mfrac, state_color(mfrac * 100, TEAL))
-    y += 16
-
-    if swap_total:
-        sfrac = swap_used / swap_total
-        label(d, PAD, y, "swap", TEAL, size=T_MICRO)
-        text(d, R, y - 2, f"{fmt_bytes(swap_used)} / {fmt_bytes(swap_total)}", f_val_sm, TEXT, anchor="r")
-        y += 14
-        bar(img, PAD, y, CW, 4, sfrac, state_color(sfrac * 100, TEAL))
-        y += 8
-    y += gap(22)
-
-    label(d, PAD, y, "disk", PINK)
-    infos = []
-    for mp in (_s.get("disks") or ["/"]):
-        try:
-            vfs2 = os.statvfs(mp)
-            tot = vfs2.f_blocks * vfs2.f_frsize
-            usd = tot - vfs2.f_bfree * vfs2.f_frsize
-            if tot:
-                infos.append((mp, usd, tot))
-        except OSError:
-            pass
-    if not infos:
-        infos = [("/", disk_used, disk_total)]
-    if len(infos) == 1:
-        mp, usd, tot = infos[0]
-        text(d, R, y - 2, f"{fmt_bytes(usd)} / {fmt_bytes(tot)}", f_val, TEXT, anchor="r")
+    if SECTIONS.get("memory", True):
+        mfrac = mem_used / mem_total
+        label(d, PAD, y, "memory", TEAL)
+        text(d, R, y - 2, f"{fmt_bytes(mem_used)} / {fmt_bytes(mem_total)}", f_val, TEXT, anchor="r")
         y += 16
-        bar(img, PAD, y, CW, 6, usd / tot, state_color(usd / tot * 100, PINK))
-        y += 15
-    else:
-        y += 18
-        for mp, usd, tot in infos:
-            label(d, PAD, y, mp, PINK, size=T_MICRO)
-            text(d, R, y - 2, f"{fmt_bytes(usd)} / {fmt_bytes(tot)}", f_val_sm, TEXT, anchor="r")
+        bar(img, PAD, y, CW, 6, mfrac, state_color(mfrac * 100, TEAL))
+        y += 16
+        if swap_total:
+            sfrac = swap_used / swap_total
+            label(d, PAD, y, "swap", TEAL, size=T_MICRO)
+            text(d, R, y - 2, f"{fmt_bytes(swap_used)} / {fmt_bytes(swap_total)}", f_val_sm, TEXT, anchor="r")
             y += 14
-            bar(img, PAD, y, CW, 5, usd / tot, state_color(usd / tot * 100, PINK))
-            y += 13
-    text(d, PAD, y, "read", F(UI_MED, T_BODY), TEXT)
-    text(d, PAD + 34, y, fmt_bytes(rd, True), f_val_sm, TEXT)
-    text(d, R, y, fmt_bytes(wr, True), f_val_sm, TEXT, anchor="r")
-    text(d, R - measure(f_val_sm, fmt_bytes(wr, True)) / SS - 9, y, "write", F(UI_MED, T_BODY), TEXT, anchor="r")
-    y += gap(30)
+            bar(img, PAD, y, CW, 4, sfrac, state_color(sfrac * 100, TEAL))
+            y += 8
+        y += gap(22)
+
+    if SECTIONS.get("disk", True):
+        label(d, PAD, y, "disk", PINK)
+        infos = []
+        for mp in (_s.get("disks") or ["/"]):
+            try:
+                vfs2 = os.statvfs(mp)
+                tot = vfs2.f_blocks * vfs2.f_frsize
+                usd = tot - vfs2.f_bfree * vfs2.f_frsize
+                if tot:
+                    infos.append((mp, usd, tot))
+            except OSError:
+                pass
+        if not infos:
+            infos = [("/", disk_used, disk_total)]
+        if len(infos) == 1:
+            mp, usd, tot = infos[0]
+            text(d, R, y - 2, f"{fmt_bytes(usd)} / {fmt_bytes(tot)}", f_val, TEXT, anchor="r")
+            y += 16
+            bar(img, PAD, y, CW, 6, usd / tot, state_color(usd / tot * 100, PINK))
+            y += 15
+        else:
+            y += 18
+            for mp, usd, tot in infos:
+                label(d, PAD, y, mp, PINK, size=T_MICRO)
+                text(d, R, y - 2, f"{fmt_bytes(usd)} / {fmt_bytes(tot)}", f_val_sm, TEXT, anchor="r")
+                y += 14
+                bar(img, PAD, y, CW, 5, usd / tot, state_color(usd / tot * 100, PINK))
+                y += 13
+        text(d, PAD, y, "read", F(UI_MED, T_BODY), TEXT)
+        text(d, PAD + 34, y, fmt_bytes(rd, True), f_val_sm, TEXT)
+        text(d, R, y, fmt_bytes(wr, True), f_val_sm, TEXT, anchor="r")
+        text(d, R - measure(f_val_sm, fmt_bytes(wr, True)) / SS - 9, y, "write", F(UI_MED, T_BODY), TEXT, anchor="r")
+        y += gap(30)
 
     if SECTIONS.get("network", True):
         label(d, PAD, y, "network", ACCENT)
@@ -1881,7 +1891,7 @@ def render(write_png=True):
             y += 12
         y += gap(20)
 
-    if have_battery:
+    if have_battery and SECTIONS.get("battery", True):
         full = bstatus == "Full" or cap >= 100
         if charging or full:
             bcol = GREEN
@@ -1912,7 +1922,7 @@ def render(write_png=True):
 
     # ============ DEVICES (peripheral batteries) =================
     periph_sel = _s.get("peripherals") or []
-    if periph_sel:
+    if periph_sel and SECTIONS.get("devices", True):
         devs = [p for p in peripheral_batteries()
                 if p["id"] in periph_sel and p["capacity"] is not None]
         if devs:
@@ -2813,8 +2823,13 @@ def run_settings():
     _, seg, sec_ = make_group("Panel sections")
     secgrid = Gtk.Grid(row_spacing=8, column_spacing=24)
     checks = {}
-    for idx, (key, txt) in enumerate((("thermals", "Thermals"), ("network", "Network"),
-                                      ("power", "Power"), ("processes", "Top processes"))):
+    for idx, (key, txt) in enumerate((("top", "Quota / weather"), ("load", "Uptime & load"),
+                                      ("gauges", "CPU / GPU / RAM"), ("cores", "Core strip"),
+                                      ("history", "History"), ("thermals", "Thermals"),
+                                      ("memory", "Memory & swap"), ("disk", "Disk"),
+                                      ("network", "Network"), ("power", "Power"),
+                                      ("battery", "Battery"), ("devices", "Devices"),
+                                      ("processes", "Top processes"))):
         cb = Gtk.CheckButton(label=txt)
         cb.set_active(s["sections"].get(key, True))
         checks[key] = cb
