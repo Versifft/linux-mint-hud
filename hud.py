@@ -2452,6 +2452,7 @@ def run_settings():
         border-color: #3b82f6;
     }
     spinbutton, spinbutton entry { border-radius: 9px; }
+    spinbutton { background-color: #000000; border-color: #000000; padding: 0; }
     spinbutton button { min-height: 0; min-width: 16px; padding: 0 2px; margin: 3px; }
     spinbutton button image { -gtk-icon-transform: scale(0.62); }
     combobox button { padding: 6px 10px; }
