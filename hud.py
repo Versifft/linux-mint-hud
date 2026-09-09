@@ -2196,19 +2196,25 @@ def run_window(interval=2.0):
         return live_vmargin[0] if live_vmargin[0] is not None else load_settings().get("vmargin", 22)
 
     def scaled_for(cfg):
-        """Scale the panel to fill the height between the top and bottom
-        margins: the vertical margin is what sizes the panel. Kept within a
-        sane zoom range so short content isn't blown up absurdly."""
+        """Uniform scale for the whole panel. The vertical margin sets the
+        scale — as a fraction of the monitor height, NOT of the current content
+        — so the panel's width depends only on the margin, never on how many
+        sections are switched on. Toggling a section changes the height only.
+        A safety clamp keeps very heavy content from overflowing."""
         img = base["img"]
         if img is None:
             return None
         disp = Gdk.Display.get_default()
         mon = (disp.get_monitor(cfg.get("monitor", 0))
                or disp.get_primary_monitor() or disp.get_monitor(0))
+        wa_h = mon.get_workarea().height
         vmargin = cur_vmargin()
-        target = max(140, mon.get_workarea().height - 2 * vmargin)
-        k = max(0.35, min(target / img.height, 2.4))
-        w, h = max(80, round(img.width * k)), max(80, round(img.height * k))
+        scale = max(0.3, min((wa_h - 2 * vmargin) / wa_h, 1.0))
+        w, h = max(80, round(img.width * scale)), max(80, round(img.height * scale))
+        maxh = wa_h - max(4, vmargin)
+        if h > maxh > 0:
+            k = maxh / h
+            w, h = max(80, round(w * k)), max(80, round(h * k))
         if (w, h) == (img.width, img.height):
             return img
         return img.resize((w, h), Image.LANCZOS)
