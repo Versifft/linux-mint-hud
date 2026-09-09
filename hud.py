@@ -96,7 +96,7 @@ def workarea_height(default=1160):
 
 
 TARGET_H = workarea_height() - 2 * MARGIN
-FLEX_MAX = 48
+FLEX_MAX = 400
 
 FLEX = 0.0
 FLEX_POINTS = 0
@@ -1973,11 +1973,14 @@ def render(write_png=True):
         y += 22
     H = int(round(y))
 
-    # The panel renders at its natural content height and no longer stretches
-    # its gaps to fill the monitor: that let the resize grip only ever shrink
-    # it (it was already full height). Size is the user's to set now, capped by
-    # auto-fit so it can grow up to the monitor without overflowing.
+    # Stretch the gaps between sections to fill TARGET_H (work area minus the
+    # two vertical margins). This fills to the bottom margin and, crucially,
+    # only changes the gaps — never the width — so toggling a section changes
+    # the height, not the width.
+    natural = y - FLEX_POINTS * FLEX
     next_flex = 0.0
+    if FLEX_POINTS:
+        next_flex = max(0.0, min(FLEX_MAX, (TARGET_H - natural) / FLEX_POINTS))
 
     panel = panel_bg(H)
 
@@ -2196,11 +2199,11 @@ def run_window(interval=2.0):
         return live_vmargin[0] if live_vmargin[0] is not None else load_settings().get("vmargin", 22)
 
     def scaled_for(cfg):
-        """Uniform scale for the whole panel. The vertical margin sets the
-        scale — as a fraction of the monitor height, NOT of the current content
-        — so the panel's width depends only on the margin, never on how many
-        sections are switched on. Toggling a section changes the height only.
-        A safety clamp keeps very heavy content from overflowing."""
+        """The frame is already flex-filled to TARGET_H, so at rest this returns
+        it unchanged (native width). It rescales only to give live feedback
+        while the grip is dragged (the fill target has changed but the frame is
+        re-rendered on the next tick), and to keep a second panel on a shorter
+        monitor from overflowing."""
         img = base["img"]
         if img is None:
             return None
@@ -2208,13 +2211,18 @@ def run_window(interval=2.0):
         mon = (disp.get_monitor(cfg.get("monitor", 0))
                or disp.get_primary_monitor() or disp.get_monitor(0))
         wa_h = mon.get_workarea().height
-        vmargin = cur_vmargin()
-        scale = max(0.3, min((wa_h - 2 * vmargin) / wa_h, 1.0))
-        w, h = max(80, round(img.width * scale)), max(80, round(img.height * scale))
-        maxh = wa_h - max(4, vmargin)
+        target = max(140, wa_h - 2 * cur_vmargin())
+        # Never scale *up*: the frame is already flex-filled to native width, so
+        # upscaling here would only widen it (e.g. during the tick or two the
+        # flex takes to converge after a section is toggled). Downscaling is
+        # kept — it fits the frame when the content is taller than the target
+        # (a very large vmargin, or a shorter second monitor).
+        k = min(1.0, target / img.height)
+        w, h = max(80, round(img.width * k)), max(80, round(img.height * k))
+        maxh = wa_h - max(4, cur_vmargin())
         if h > maxh > 0:
-            k = maxh / h
-            w, h = max(80, round(w * k)), max(80, round(h * k))
+            k2 = maxh / h
+            w, h = max(80, round(w * k2)), max(80, round(h * k2))
         if (w, h) == (img.width, img.height):
             return img
         return img.resize((w, h), Image.LANCZOS)
@@ -2398,10 +2406,16 @@ def run_window(interval=2.0):
             pw["win"].destroy()
 
     def tick():
+        global TARGET_H
         try:
-            base["img"] = render(write_png=False)   # native frame; scaled per panel
             s = load_settings()
             cfgs = s.get("panels") or [{"monitor": 0, "position": "top-right", "offset": None}]
+            # fill height = the first panel's monitor minus the two vertical margins
+            disp0 = Gdk.Display.get_default()
+            m0 = (disp0.get_monitor(cfgs[0].get("monitor", 0))
+                  or disp0.get_primary_monitor() or disp0.get_monitor(0))
+            TARGET_H = max(200, m0.get_workarea().height - 2 * cur_vmargin())
+            base["img"] = render(write_png=False)   # flex-filled to TARGET_H at native width
             sync_count(max(1, len(cfgs)))
             move_idx = s.get("move")
             if move_idx is True:
