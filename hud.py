@@ -1,14 +1,5 @@
 #!/usr/bin/env python3
-"""A system panel that lives on the desktop.
 
-Reads every metric straight from /proc and /sys, draws the whole panel with
-Pillow — letterspacing, rounded bars, gradients, ring gauges, a glass
-background, none of which a text-based panel can do — and paints the result
-into its own desktop window through GTK and cairo.
-
-Rates are deltas against the previous frame, so no sampling sleep is needed.
-Run with --png to write a single frame to cache/hud.png instead.
-"""
 import fcntl
 import glob
 import json

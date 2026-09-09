@@ -1,19 +1,5 @@
 #!/usr/bin/env python3
-"""Loads the claude.ai session cookie from a running browser.
 
-Tries Firefox and its forks first, then Chromium-family browsers, then the
-last cached copy. Firefox first because reading it is a plain sqlite copy;
-Chromium needs the desktop keyring and the cryptography library, so it is only
-reached when Firefox yields nothing.
-
-Firefox rolls the claude.ai session cookie forward every time the site is
-visited (expiry is a rolling ~30 days), so taking it from the live browser
-profile means it never goes stale — as long as you stay logged in in Firefox.
-That replaces the manual DevTools/HAR export the setup used to need.
-
-Run standalone to write ~/.config/mint-hud/.claude_web_cookie; claude_quota.py
-imports load_cookie() and calls it on every fetch.
-"""
 import configparser
 import glob
 import os

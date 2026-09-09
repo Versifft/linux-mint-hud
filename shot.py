@@ -1,11 +1,5 @@
 #!/usr/bin/env python3
-"""Renders one frame and writes it to docs/ as a standalone panel image.
 
-The panel is translucent dark glass, so it cannot simply be saved with its
-alpha channel: GitHub renders a README image on white in light mode, and light
-text on white is unreadable. It goes onto a flat dark ground instead — neutral,
-and no wallpaper, so a screenshot shows the app and nothing personal.
-"""
 import subprocess
 import sys
 from PIL import Image

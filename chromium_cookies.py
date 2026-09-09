@@ -1,21 +1,5 @@
 #!/usr/bin/env python3
-"""Reads claude.ai cookies out of a Chromium-family browser.
 
-Chromium encrypts cookie values with AES-128-CBC. On Linux the key is derived
-with PBKDF2 (salt 'saltysalt', one iteration, 16-byte key) from a password that
-depends on the value's prefix:
-
-  v10  a fixed password, 'peanuts', used when no keyring is available
-  v11  a password stored in the desktop keyring (gnome-keyring / kwallet),
-       looked up here through libsecret
-
-Newer Chromium (v127+) prepends a 32-byte SHA-256 domain hash to the plaintext,
-which has to be stripped. We detect that rather than assume it: a session
-cookie is ASCII, so if byte 0 is not printable we drop the first 32.
-
-This is a separate module from browser_cookie because the Chromium path
-pulls in cryptography and libsecret that the Firefox path does not need.
-"""
 import os
 import sqlite3
 import shutil

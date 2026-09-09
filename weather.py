@@ -1,13 +1,5 @@
 #!/usr/bin/env python3
-"""Current weather for the panel, from open-meteo — no API key, and once the
-location is configured nothing identifying is sent (unlike an IP lookup).
 
-Location lives in weather.json next to this script:
-    {"lat": 47.01, "lon": 7.69, "name": "Lützelflüh"}
-Prints one JSON line the panel parses, or nothing at all if there is no config
-or the fetch fails — the panel then omits the weather slot, exactly as it omits
-Claude without a subscription.
-"""
 import json
 import os
 import sys

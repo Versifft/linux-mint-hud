@@ -1,18 +1,5 @@
 #!/usr/bin/env python3
-"""Pulls the real Claude Pro/Max plan quota (session + weekly %) from the
-same undocumented endpoint claude.ai's own settings page uses:
-  GET https://claude.ai/api/organizations/{org_id}/usage
 
-Auth is a browser session cookie, taken straight out of the live Firefox
-browser by browser_cookie.py and cached at ~/.config/mint-hud/.claude_web_cookie
-(chmod 600, never committed). Firefox rolls that cookie forward on every visit
-to claude.ai, so reading it from the browser each time means it renews itself —
-no more periodic DevTools/HAR export by hand.
-This is NOT a supported API — Anthropic offers no usage/quota API for
-Pro/Max subscribers, only for Console orgs with an Admin API key. It can
-break or get blocked at any time, and the cookie will eventually expire
-(re-export it from the browser when that happens).
-"""
 import datetime
 import json
 import subprocess
