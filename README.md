@@ -76,7 +76,6 @@ across the gaps between sections rather than leaving a hole at the bottom.
 | `browser_cookie.py` | reads the session cookie from the running browser — Firefox first, then Chromium |
 | `chromium_cookies.py` | the Chromium half: decrypts its cookie store via the desktop keyring |
 | `99-rapl-psys.rules` | optional udev rule for the system-power reading |
-| `shot.py` | renders one frame to `docs/` for the screenshots here |
 
 It adapts to the hardware it finds. CPU temperature comes from Intel
 `coretemp`, AMD `k10temp` or a thermal zone; GPU load from Intel/AMD DRM
