@@ -40,7 +40,9 @@ DEFAULT_SETTINGS = {
     "move": None,                  # index of the panel being placed by hand, or None
     "monitor": 0,                  # legacy single-panel keys (migrated into panels)
     "position": "top-right",
-    "margin": 22,
+    "margin": 22,                  # legacy single margin, migrated to vmargin/hmargin
+    "vmargin": 22,                 # top & bottom gap — sets the panel's height
+    "hmargin": 22,                 # gap from the near side edge
     "location": None,
     "units": "c",                  # "c" or "f", for every temperature shown
     "disks": None,                 # mount points to show; None -> just "/"
@@ -1407,6 +1409,10 @@ def load_settings():
         if isinstance(data.get("sections"), dict):
             sec.update(data["sections"])
         s["sections"] = sec
+        if "vmargin" not in data:
+            s["vmargin"] = data.get("margin", 22)
+        if "hmargin" not in data:
+            s["hmargin"] = data.get("margin", 22)
         # placement moved from single monitor/position/offset keys to a list of
         # panels; migrate the old ones into panel 0 so nothing is lost.
         if not s.get("panels"):
@@ -2127,19 +2133,17 @@ def run_window(interval=2.0):
         mon = (disp.get_monitor(cfg.get("monitor", 0))
                or disp.get_primary_monitor() or disp.get_monitor(0))
         wa = mon.get_workarea()
-        margin = load_settings().get("margin", MARGIN)
+        s = load_settings()
+        vmargin, hmargin = cur_vmargin(), s.get("hmargin", 22)
         pos = cfg.get("position", "top-right")
         off = cfg.get("offset")
-        if pw["idx"] == 0:
-            TARGET_H = max(200, wa.height - 2 * margin)
         if pos == "free" and isinstance(off, (list, tuple)) and len(off) == 2:
             x, yy = wa.x + int(off[0]), wa.y + int(off[1])
-            # a free panel still keeps at least the edge margin from every side
-            x = max(wa.x + margin, min(x, wa.x + wa.width - w - margin))
-            yy = max(wa.y + margin, min(yy, wa.y + wa.height - h - margin))
+            x = max(wa.x + hmargin, min(x, wa.x + wa.width - w - hmargin))
+            yy = max(wa.y + vmargin, min(yy, wa.y + wa.height - h - vmargin))
         else:
-            x = wa.x + (wa.width - w - margin if pos.endswith("right") else margin)
-            yy = wa.y + (wa.height - h - margin if pos.startswith("bottom") else margin)
+            x = wa.x + (wa.width - w - hmargin if pos.endswith("right") else hmargin)
+            yy = wa.y + (wa.height - h - vmargin if pos.startswith("bottom") else vmargin)
             x = max(wa.x, min(x, wa.x + wa.width - w))
             yy = max(wa.y, min(yy, wa.y + wa.height - h))
         win.set_size_request(w, h)
@@ -2155,10 +2159,11 @@ def run_window(interval=2.0):
         disp = Gdk.Display.get_default()
         mon = disp.get_monitor_at_point(x + w // 2, y + h // 2) or disp.get_primary_monitor()
         wa = mon.get_workarea()
-        margin = load_settings().get("margin", MARGIN)
+        s = load_settings()
+        vmargin, hmargin = s.get("vmargin", 22), s.get("hmargin", 22)
         SNAP = 26
-        sx = [wa.x + margin, wa.x + wa.width - w - margin]
-        sy = [wa.y + margin, wa.y + wa.height - h - margin]
+        sx = [wa.x + hmargin, wa.x + wa.width - w - hmargin]
+        sy = [wa.y + vmargin, wa.y + wa.height - h - vmargin]
         for other in panels:
             if other is pw:
                 continue
@@ -2185,22 +2190,25 @@ def run_window(interval=2.0):
         return x, y
     base = {"img": None}                 # the latest native-size rendered frame
     GRIP = 30                            # size of the resize handle, in px
+    live_vmargin = [None]                # in-flight value while the grip is dragged
+
+    def cur_vmargin():
+        return live_vmargin[0] if live_vmargin[0] is not None else load_settings().get("vmargin", 22)
 
     def scaled_for(cfg):
-        """The panel image scaled by cfg['scale'], then clamped so it never
-        exceeds the monitor's usable height (auto-fit is the safety net)."""
+        """Scale the panel to fill the height between the top and bottom
+        margins: the vertical margin is what sizes the panel. Kept within a
+        sane zoom range so short content isn't blown up absurdly."""
         img = base["img"]
         if img is None:
             return None
         disp = Gdk.Display.get_default()
-        scale = float(cfg.get("scale", 1.0) or 1.0)
-        w, h = max(80, round(img.width * scale)), max(80, round(img.height * scale))
         mon = (disp.get_monitor(cfg.get("monitor", 0))
                or disp.get_primary_monitor() or disp.get_monitor(0))
-        usable = mon.get_workarea().height - load_settings().get("margin", MARGIN)
-        if h > usable > 0:
-            k = usable / h
-            w, h = max(80, round(w * k)), max(80, round(h * k))
+        vmargin = cur_vmargin()
+        target = max(140, mon.get_workarea().height - 2 * vmargin)
+        k = max(0.35, min(target / img.height, 2.4))
+        w, h = max(80, round(img.width * k)), max(80, round(img.height * k))
         if (w, h) == (img.width, img.height):
             return img
         return img.resize((w, h), Image.LANCZOS)
@@ -2284,8 +2292,7 @@ def run_window(interval=2.0):
             w, h = win.get_allocated_width(), win.get_allocated_height()
             if ev.x >= w - GRIP - 8 and ev.y >= h - GRIP - 8:
                 drag["mode"] = "resize"
-                drag["sscale"] = float(_cfg_of().get("scale", 1.0) or 1.0)
-                st["rscale"] = drag["sscale"]
+                drag["svm"] = cur_vmargin()
             else:
                 drag["mode"] = "move"
                 drag["wx"], drag["wy"] = win.get_position()
@@ -2295,14 +2302,15 @@ def run_window(interval=2.0):
             if not (st.get("moving") and drag["active"]):
                 return False
             if drag.get("mode") == "resize":
-                sc = max(0.5, min(2.0, drag["sscale"] + (ev.x_root - drag["sx"]) / W))
-                st["rscale"] = sc
+                # bottom-right grip: dragging down grows the panel, i.e. shrinks
+                # the top/bottom margin that sizes it
+                nv = int(round(drag["svm"] - (ev.y_root - drag["sy"]) / 2))
+                live_vmargin[0] = max(0, min(nv, 400))
                 st["resizing"] = True
                 cfg = _cfg_of()
-                cfg["scale"] = sc
                 dimg = paint(pw, cfg)
                 if dimg is not None:
-                    win.set_size_request(dimg.width, dimg.height)
+                    place(pw, cfg, dimg.width, dimg.height)
                 win.queue_draw()
             else:
                 nx = int(drag["wx"] + (ev.x_root - drag["sx"]))
@@ -2321,7 +2329,9 @@ def run_window(interval=2.0):
             while len(cfgs) <= pw["idx"]:
                 cfgs.append({"monitor": 0, "position": "top-right", "offset": None})
             if drag.get("mode") == "resize":
-                cfgs[pw["idx"]]["scale"] = round(st.get("rscale", 1.0), 3)
+                if live_vmargin[0] is not None:
+                    s["vmargin"] = int(live_vmargin[0])
+                    live_vmargin[0] = None
                 st["resizing"] = False
             else:
                 wx, wy = win.get_position()
@@ -2331,22 +2341,21 @@ def run_window(interval=2.0):
                 mon = (disp.get_monitor_at_point(wx + ww // 2, wy + (st["h"] or 0) // 2)
                        or disp.get_primary_monitor())
                 wa = mon.get_workarea()
-                margin = load_settings().get("margin", MARGIN)
-                scale = cfgs[pw["idx"]].get("scale", 1.0)
+                vmargin, hmargin = s.get("vmargin", 22), s.get("hmargin", 22)
                 mi = mon_index(disp, mon)
-                # dropped in a corner (the snap put it exactly at the margin) ->
-                # anchor to that corner, so the edge-margin setting then controls
-                # its gap. Otherwise keep the exact spot as a free offset.
-                left = abs(wx - (wa.x + margin)) <= 6
-                right = abs((wx + ww) - (wa.x + wa.width - margin)) <= 6
-                top = abs(wy - (wa.y + margin)) <= 6
-                bottom = abs((wy + wh) - (wa.y + wa.height - margin)) <= 6
+                # dropped in a corner (the snap put it exactly on the margins) ->
+                # anchor to that corner, so the margins then control its gaps.
+                # Otherwise keep the exact spot as a free offset.
+                left = abs(wx - (wa.x + hmargin)) <= 6
+                right = abs((wx + ww) - (wa.x + wa.width - hmargin)) <= 6
+                top = abs(wy - (wa.y + vmargin)) <= 6
+                bottom = abs((wy + wh) - (wa.y + wa.height - vmargin)) <= 6
                 if (left or right) and (top or bottom):
                     pos = ("bottom" if bottom else "top") + ("-right" if right else "-left")
-                    cfgs[pw["idx"]] = {"monitor": mi, "position": pos, "offset": None, "scale": scale}
+                    cfgs[pw["idx"]] = {"monitor": mi, "position": pos, "offset": None}
                 else:
                     cfgs[pw["idx"]] = {"monitor": mi, "position": "free",
-                                       "offset": [wx - wa.x, wy - wa.y], "scale": scale}
+                                       "offset": [wx - wa.x, wy - wa.y]}
             # stay in move mode after a drag: the settings' "Save position"
             # button (which clears settings["move"]) is what ends it, so the
             # user can nudge or resize repeatedly first.
@@ -2403,7 +2412,7 @@ def run_window(interval=2.0):
                     paint(pw, cfg)
                 if not st.get("moving"):
                     key = (st.get("w"), st.get("h"), cfg.get("monitor"), cfg.get("position"),
-                           cfg.get("scale"), s.get("margin"), tuple(cfg.get("offset") or ()))
+                           s.get("vmargin"), s.get("hmargin"), tuple(cfg.get("offset") or ()))
                     if key != st.get("placekey"):
                         st["placekey"] = key
                         place(pw, cfg, st["w"], st["h"])
@@ -2692,9 +2701,12 @@ def run_settings():
     reset_btn.connect("clicked", do_reset)
     refresh_move_labels()
 
-    margin_spin = _noscroll(Gtk.SpinButton.new_with_range(0, 200, 1))
-    margin_spin.set_value(s.get("margin", 22))
-    field(pg, pc, "Edge margin (px)", margin_spin)
+    vmargin_spin = _noscroll(Gtk.SpinButton.new_with_range(0, 400, 1))
+    vmargin_spin.set_value(s.get("vmargin", 22))
+    field(pg, pc, "Top / bottom gap", vmargin_spin)
+    hmargin_spin = _noscroll(Gtk.SpinButton.new_with_range(0, 400, 1))
+    hmargin_spin.set_value(s.get("hmargin", 22))
+    field(pg, pc, "Side gap", hmargin_spin)
     margin_spin.set_hexpand(False)
     margin_spin.set_halign(Gtk.Align.START)
     margin_spin.set_size_request(130, -1)
@@ -2831,7 +2843,8 @@ def run_settings():
 
     def do_save(_b):
         new = dict(load_settings())
-        new["margin"] = int(margin_spin.get_value())
+        new["vmargin"] = int(vmargin_spin.get_value())
+        new["hmargin"] = int(hmargin_spin.get_value())
         new["location"] = loc_state["data"]
         new["units"] = units_combo.get_active_id() or "c"
         new["sections"] = {k: cb.get_active() for k, cb in checks.items()}
