@@ -1873,7 +1873,10 @@ def run_window(interval=2.0):
         gw = win.get_window()
         if gw is None:
             return
-        gw.input_shape_combine_region(None, 0, 0)      # accept the pointer again
+        w = win.get_allocated_width() or W
+        h = win.get_allocated_height() or state.get("h") or 1000
+        gw.input_shape_combine_region(          # whole window accepts the pointer
+            cairo.Region(cairo.RectangleInt(0, 0, w, h)), 0, 0)
         win.set_keep_below(False)
         win.set_keep_above(True)
         state["moving"] = True
