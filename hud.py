@@ -2442,10 +2442,15 @@ def run_window(interval=2.0):
         x, y, bw, bh, m = eff_margins(pw, cfg, wa)
         maxh = wa.height - m["top"] - 2
         if pw["state"].get("resizing"):
-            # Live feedback while the grip is dragged: stretch the current frame
-            # straight to the box (one cheap resize, no re-render — that was far
-            # too heavy per motion event). The next tick re-renders it crisply.
-            w, h = max(120, int(bw)), max(80, min(int(bh), maxh))
+            # Live feedback while the grip is dragged: one cheap *uniform* rescale
+            # to the box width (no re-render, and no distortion — the grip keeps
+            # the aspect, so the height comes out right). The next tick re-renders
+            # it crisply.
+            k = bw / img.width
+            w, h = max(120, round(img.width * k)), max(80, round(img.height * k))
+            if h > maxh > 0:
+                k2 = maxh / h
+                w, h = max(120, round(w * k2)), max(80, round(h * k2))
             return img.resize((w, h), Image.BILINEAR)
         k = bw / img.width
         w, h = max(120, round(img.width * k)), max(80, round(img.height * k))
@@ -2545,6 +2550,7 @@ def run_window(interval=2.0):
                 wa = monitor_of(_cfg_of()).get_workarea()
                 drag["m0"] = panel_box(_cfg_of(), wa)[4]
                 drag["wa"] = wa
+                drag["sw0"], drag["sh0"] = max(1, w), max(1, h)   # current size
             else:
                 drag["mode"] = "move"
                 drag["wx"], drag["wy"] = win.get_position()
@@ -2554,12 +2560,18 @@ def run_window(interval=2.0):
             if not (st.get("moving") and drag["active"]):
                 return False
             if drag.get("mode") == "resize":
-                # bottom-right grip: dragging right/down grows the box, i.e.
-                # shrinks the right and bottom margins that bound it.
+                # bottom-right grip: an aspect-locked resize. Both the horizontal
+                # and vertical drag feed one uniform scale, so the panel grows or
+                # shrinks without distortion; the four number fields are there for
+                # independent per-edge tuning.
                 m0, wa = drag["m0"], drag["wa"]
+                sw0, sh0 = drag["sw0"], drag["sh0"]
                 dx, dy = ev.x_root - drag["sx"], ev.y_root - drag["sy"]
-                new_right = max(0, min(int(m0["right"] - dx), wa.width - m0["left"] - 160))
-                new_bottom = max(0, min(int(m0["bottom"] - dy), wa.height - m0["top"] - 120))
+                k = max(0.2, ((sw0 + dx) / sw0 + (sh0 + dy) / sh0) / 2)
+                new_sw = min(max(160, sw0 * k), wa.width - m0["left"])
+                new_sh = min(max(120, sh0 * k), wa.height - m0["top"])
+                new_right = int(wa.width - m0["left"] - new_sw)
+                new_bottom = int(wa.height - m0["top"] - new_sh)
                 live_box[0] = {"idx": pw["idx"],
                                "margins": {**m0, "right": new_right, "bottom": new_bottom}}
                 st["resizing"] = True
@@ -2655,13 +2667,16 @@ def run_window(interval=2.0):
         panel is rendered to the native height that, scaled to its box width,
         fills its box height; it keeps its own flex, which converges over two
         passes, so a settings change asks for passes=2. Touches no windows."""
+        # While a panel is actively dragged, skip the whole refresh — gathering
+        # metrics and rendering is heavy enough to hitch the drag. The live
+        # feedback runs off the last frame; the metrics resume on release.
+        if any(pw["state"].get("drag", {}).get("active") for pw in panels):
+            return
         M = gather_frame()
         last_frame[0] = M
         cfgs = load_settings().get("panels") or [DEFAULT_CFG]
         for i, pw in enumerate(panels):
             st = pw["state"]
-            if st.get("drag", {}).get("active"):
-                continue          # don't re-render while actively dragging (hitch)
             cfg = cfgs[i] if i < len(cfgs) else {}
             tnative = _native_target(pw, cfg)
             img, fl = st.get("img"), st.get("flex", 0.0)
@@ -2714,28 +2729,28 @@ def run_window(interval=2.0):
     GLib.timeout_add(int(interval * 1000), tick)
 
     # Respond to settings changes near-instantly without cranking the (heavy)
-    # metric refresh above. A settings.json stat is almost free, so poll it
-    # often and only re-render when it actually changed — so margins, position
-    # and section toggles from the settings window apply within ~120 ms.
-    def watch_settings():
+    # metric refresh above. Reading the small settings file is cheap, so poll it
+    # often and re-render only when its *contents* change — a content hash, not
+    # the mtime, because a coarse filesystem mtime can collapse two quick edits
+    # (a section toggled off then on) into no visible change.
+    def _settings_stamp():
         try:
-            m = os.path.getmtime(SETTINGS_FILE)
+            with open(SETTINGS_FILE, "rb") as f:
+                return hash(f.read())
         except OSError:
-            m = -1.0
-        if m != watch_settings.mtime:
-            watch_settings.mtime = m
+            return None
+
+    def watch_settings():
+        stamp = _settings_stamp()
+        if stamp != watch_settings.stamp:
+            watch_settings.stamp = stamp
             # Two render passes converge the flex fill for the new layout, then
-            # the panel is placed once at its final size. Without this the
-            # panel jumps to a wrong height and settles only on the next metric
-            # tick (up to `interval` later) — the visible "springt hin und her"
-            # when sections are toggled.
+            # the panel is placed once at its final size (no "springt hin und
+            # her" when sections are toggled).
             tick(passes=2)
         return True
 
-    try:
-        watch_settings.mtime = os.path.getmtime(SETTINGS_FILE)
-    except OSError:
-        watch_settings.mtime = -1.0
+    watch_settings.stamp = _settings_stamp()
     GLib.timeout_add(120, watch_settings)
 
     log(f"panel started (pid {os.getpid()})")
