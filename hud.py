@@ -2712,13 +2712,6 @@ def run_settings():
         _sp.set_halign(Gtk.Align.START)
         _sp.set_size_request(130, -1)
 
-    def live_margins(*_):
-        st = dict(load_settings())
-        st["vmargin"] = int(vmargin_spin.get_value())
-        st["hmargin"] = int(hmargin_spin.get_value())
-        save_settings(st)                    # panel re-sizes/re-places on its next tick
-    vmargin_spin.connect("value-changed", live_margins)
-    hmargin_spin.connect("value-changed", live_margins)
 
     # ---- Weather ---------------------------------------------------------
     _, wg, wc = make_group("Weather")
@@ -2748,6 +2741,7 @@ def run_settings():
             loc_label.get_style_context().remove_class("result")
             loc_label.get_style_context().add_class("result-ok")
             loc_label.set_text(f"✓ {res['name']}, {res.get('admin1', '')} {res['country_code']}")
+            commit()
         except Exception:
             loc_label.get_style_context().remove_class("result-ok")
             loc_label.get_style_context().add_class("result")
@@ -2841,16 +2835,14 @@ def run_settings():
     actionbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
     _cls(actionbar, "actionbar")
     actionbar.set_border_width(16)
-    status = _cls(Gtk.Label(label="", xalign=0), "status-ok")
+    status = _cls(Gtk.Label(label="Changes apply as you make them.", xalign=0), "status-ok")
     status.set_line_wrap(True)
     actionbar.pack_start(status, True, True, 0)
-    save = _cls(Gtk.Button(label="Save"), "accent")
     close = _cls(Gtk.Button(label="Close"), "subtle")
-    actionbar.pack_end(save, False, False, 0)
     actionbar.pack_end(close, False, False, 0)
     outer.pack_start(actionbar, False, False, 0)
 
-    def do_save(_b):
+    def commit(*_):
         new = dict(load_settings())
         new["vmargin"] = int(vmargin_spin.get_value())
         new["hmargin"] = int(hmargin_spin.get_value())
@@ -2864,9 +2856,14 @@ def run_settings():
         psel = [pid for pid, cb in periph_checks.items() if cb.get_active()]
         new["peripherals"] = psel or None
         save_settings(new)
-        status.set_text("Saved — the panel updates within a second.")
-    save.connect("clicked", do_save)
-    save.get_style_context().add_class("accent")
+
+    # every control applies itself immediately — no Save button
+    units_combo.connect("changed", commit)
+    for _cb in (list(checks.values()) + list(disk_checks.values())
+                + list(sens_checks.values()) + list(periph_checks.values())):
+        _cb.connect("toggled", commit)
+    vmargin_spin.connect("value-changed", commit)
+    hmargin_spin.connect("value-changed", commit)
     close.connect("clicked", lambda *_: win.close())
 
     win.connect("destroy", Gtk.main_quit)
