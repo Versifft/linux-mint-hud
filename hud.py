@@ -2461,6 +2461,15 @@ def run_window(interval=2.0):
             m = -1.0
         if m != watch_settings.mtime:
             watch_settings.mtime = m
+            # The flex fill converges on the *second* render: the first
+            # computes the exact gap stretch for the new layout, the second
+            # applies it. Render twice synchronously here — both run in this
+            # one main-loop callback, so GTK only ever paints the final,
+            # correct frame. Without this the panel jumps to a wrong height
+            # and settles only on the next metric tick (up to `interval`
+            # later) — the visible "springt hin und her, braucht 1-2 s" when
+            # several sections are toggled quickly.
+            tick()
             tick()
         return True
 
