@@ -2449,6 +2449,27 @@ def run_window(interval=2.0):
 
     tick()
     GLib.timeout_add(int(interval * 1000), tick)
+
+    # Respond to settings changes near-instantly without cranking the (heavy)
+    # metric refresh above. A settings.json stat is almost free, so poll it
+    # often and only re-render when it actually changed — so margins, position
+    # and section toggles from the settings window apply within ~120 ms.
+    def watch_settings():
+        try:
+            m = os.path.getmtime(SETTINGS_FILE)
+        except OSError:
+            m = -1.0
+        if m != watch_settings.mtime:
+            watch_settings.mtime = m
+            tick()
+        return True
+
+    try:
+        watch_settings.mtime = os.path.getmtime(SETTINGS_FILE)
+    except OSError:
+        watch_settings.mtime = -1.0
+    GLib.timeout_add(120, watch_settings)
+
     log(f"panel started (pid {os.getpid()})")
     Gtk.main()
 
