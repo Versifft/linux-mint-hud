@@ -27,7 +27,7 @@ CHROMIUM_DIRS = (
     ".config/BraveSoftware/Brave-Browser",
     ".config/microsoft-edge",
     ".config/vivaldi",
-    ".var/app/org.chromium.Chromium/config/chromium",   # flatpak
+    ".var/app/org.chromium.Chromium/config/chromium",
 )
 
 
@@ -39,8 +39,6 @@ def _keyring_password(app_hint):
         from gi.repository import Secret
     except Exception:
         return None
-    # the schema name and the "application" attribute have both drifted across
-    # versions, so try the known combinations
     schemas = ("chrome_libsecret_os_crypt_password_v2",
                "chrome_libsecret_os_crypt_password_v1",
                "chrome_libsecret_password_v2",
@@ -79,8 +77,6 @@ def _decrypt(blob, key_v10, key_v11):
     pad = plain[-1]
     if 1 <= pad <= 16:
         plain = plain[:-pad]
-    # v127+ prepends a 32-byte SHA-256 domain hash; a session cookie is ASCII,
-    # so a non-printable first byte means the hash is there and must go
     if plain and not (0x20 <= plain[0] <= 0x7e):
         plain = plain[32:]
     try:

@@ -16,7 +16,6 @@ import urllib.request
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONF = os.path.join(HERE, "weather.json")
 
-# WMO weather codes -> short label. Grouped ranges kept explicit for clarity.
 WMO = {
     0: "Clear", 1: "Mainly clear", 2: "Partly cloudy", 3: "Overcast",
     45: "Fog", 48: "Rime fog",
@@ -54,7 +53,7 @@ def fetch(lat, lon):
 def main():
     conf = load_conf()
     if not conf:
-        return                      # no location set; panel omits weather
+        return
     lat, lon, name = conf
     try:
         d = fetch(lat, lon)
@@ -72,7 +71,6 @@ def main():
         print(json.dumps(out))
     except Exception as e:
         print(f"weather: unreachable ({type(e).__name__})", file=sys.stderr)
-        # nothing on stdout -> panel omits the slot
 
 
 if __name__ == "__main__":

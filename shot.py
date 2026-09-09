@@ -10,8 +10,8 @@ import subprocess
 import sys
 from PIL import Image
 
-GROUND = (24, 26, 30)          # flat, close to what the glass expects behind it
-PAD = 26                       # a little air so the rounded corners read
+GROUND = (24, 26, 30)
+PAD = 26
 
 name = sys.argv[1] if len(sys.argv) > 1 else "panel"
 subprocess.run(["./hud.py", "--png"], check=True,

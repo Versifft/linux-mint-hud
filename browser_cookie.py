@@ -24,21 +24,16 @@ import tempfile
 
 HOME = os.path.expanduser("~")
 
-# Firefox and its forks all keep the same profile layout, so they all work.
-# Chromium-family browsers do not: their cookie store is encrypted against a
-# key in the desktop keyring, which is a different job entirely.
 BROWSER_DIRS = (
     ".mozilla/firefox",
     ".librewolf",
     ".waterfox",
     ".floorp",
-    ".var/app/org.mozilla.firefox/.mozilla/firefox",     # flatpak
-    "snap/firefox/common/.mozilla/firefox",              # snap
+    ".var/app/org.mozilla.firefox/.mozilla/firefox",
+    "snap/firefox/common/.mozilla/firefox",
 )
 COOKIE_FILE = os.path.join(HOME, ".config/mint-hud/.claude_web_cookie")
 
-# Cloudflare's cf_clearance is bound to the User-Agent that obtained it, so the
-# request has to introduce itself as the same Firefox the cookies came from.
 USER_AGENT = ("Mozilla/5.0 (X11; Linux x86_64; rv:150.0) "
               "Gecko/20100101 Firefox/150.0")
 

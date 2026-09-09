@@ -71,9 +71,6 @@ def fmt_delta(resets_at):
     d, rem = divmod(secs, 86400)
     h, rem = divmod(rem, 3600)
     m = rem // 60
-    # the weekly window runs to ~7 days, and "129h03m" is not a duration anyone
-    # reads at a glance; the session window never reaches a day, so it keeps
-    # the shorter forms
     if d:
         return f"{d}d{h:02d}h{m:02d}m"
     if h:
@@ -94,12 +91,6 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-# Only the redirect handler is overridden. Do NOT pass an explicit
-# ssl.create_default_context() here: http.client builds its own context that
-# additionally advertises ALPN "http/1.1", and a handshake without that ALPN
-# extension gets fingerprinted as a bot and answered with 403. Certificate
-# verification is already on by default, so a hand-made context buys nothing
-# and costs the request.
 _OPENER = urllib.request.build_opener(_NoRedirect)
 
 
@@ -125,7 +116,7 @@ def main():
     an expired cookie, an unreachable endpoint."""
     org_id = get_org_id()
     if org_id is None:
-        return                      # no Claude Code here; not an error
+        return
 
     cookie, source = load_cookie()
     if not cookie:
@@ -141,8 +132,6 @@ def main():
         if e.code not in (401, 403):
             print(f"web quota: HTTP {e.code}")
             return
-        # A stale cache is the one failure worth retrying: Firefox may already
-        # hold a newer cookie than the copy we just used.
         if source == "cache":
             fresh, src2 = load_cookie()
             if fresh and src2 == "firefox" and fresh != cookie:
@@ -167,7 +156,6 @@ def main():
 
     parts = []
     if session:
-        # the session window is hours away, where a countdown is the useful form
         parts.append(f"Session {session['percent']:.0f}% (in {fmt_delta(session['resets_at'])})")
     if weekly:
         parts.append(f"Week {weekly['percent']:.0f}% ({fmt_when(weekly['resets_at'])})")

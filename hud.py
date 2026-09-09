@@ -29,7 +29,7 @@ CACHE_DIR = os.path.join(CONF_DIR, "cache")
 os.makedirs(CACHE_DIR, exist_ok=True)
 
 for _stale in glob.glob(os.path.join(CACHE_DIR, "*.tmp")):
-    try:                       # a renderer killed mid-write leaves these behind
+    try:
         if time.time() - os.path.getmtime(_stale) > 300:
             os.unlink(_stale)
     except OSError:
@@ -37,37 +37,27 @@ for _stale in glob.glob(os.path.join(CACHE_DIR, "*.tmp")):
 
 STATE_FILE = os.path.join(CACHE_DIR, "state.json")
 HISTORY_FILE = os.path.join(CACHE_DIR, "history.json")
-PNG_PATH = os.path.join(CACHE_DIR, "hud.png")   # only written by --png
+PNG_PATH = os.path.join(CACHE_DIR, "hud.png")
 LOG_FILE = os.path.join(CACHE_DIR, "hud.log")
 LOCK_FILE = os.path.join(CACHE_DIR, "hud.lock")
 
 PSUPPLY = "/sys/class/power_supply"
-DETECT_TTL = 30         # seconds between re-detections
-HIST_MAX_AGE = 3600     # keep an hour of samples
-# >1 = more resolution on the recent (right) side. 3.3 over an hour gives the
-# last minute the same 29% of the width that 2.2 gave it over fifteen, so
-# nothing was lost at the live end in exchange for the extra 45 minutes.
+DETECT_TTL = 30
+HIST_MAX_AGE = 3600
 HIST_GAMMA = 3.3
 
-# Type scale. Six steps and nothing in between: cap heights quantise to half a
-# pixel at this panel size, so 9.0 and 9.5 render identically and 10.5 and 11.0
-# do too. Sizes closer than ~1.5pt buy no hierarchy, they only look unresolved.
-T_HERO  = 29            # gauge readings
-T_LEAD  = 21            # uptime
-T_VALUE = 13            # a section's primary figure
-T_BODY  = 11.5          # secondary figures and context text
-T_LABEL = 10            # section titles, letterspaced caps
-T_MICRO = 8.5           # sub-labels inside a section
+T_HERO  = 29
+T_LEAD  = 21
+T_VALUE = 13
+T_BODY  = 11.5
+T_LABEL = 10
+T_MICRO = 8.5
 
-SS = 2                  # supersampling factor; everything is drawn at SSx then downscaled
-W = 420                 # panel width in final pixels
-PAD = 22                # horizontal padding inside the panel
-CW = W - 2 * PAD        # content width
+SS = 2
+W = 420
+PAD = 22
+CW = W - 2 * PAD
 
-# The panel is grown to sit at an equal margin on all sides. MARGIN must match
-# the window placement below. The height to fill is the WORK AREA, not the
-# screen: this desktop has a 40px taskbar at the bottom, and measuring against
-# the full 1200px would tuck the last stretch of the panel behind it.
 MARGIN = 22
 
 
@@ -87,11 +77,8 @@ def workarea_height(default=1160):
 
 
 TARGET_H = workarea_height() - 2 * MARGIN
-FLEX_MAX = 48           # cap, so a short panel doesn't get absurd gaps
+FLEX_MAX = 48
 
-# Space added to every section boundary to reach TARGET_H. Solved from the last
-# frame's measurement and carried in state.json: the layout is stable, so this
-# converges in one frame and only ever moves when the content changes shape.
 FLEX = 0.0
 FLEX_POINTS = 0
 
@@ -102,45 +89,27 @@ def gap(base):
     FLEX_POINTS += 1
     return base + FLEX
 
-# ---------------------------------------------------------------- palette
 TEXT      = (233, 238, 245)
 MUTE      = (104, 116, 133)
 STEEL     = (116, 129, 149)
-# quota ramp: green -> amber -> red. Routed through amber because a straight
-# green-to-red interpolation goes through mud in the middle.
-# Four stops, not three. With a single amber waypoint and CRIT at the end the
-# ramp never actually arrived: a battery at 13% drew (250,114,87) and 0% would
-# have been (255,84,94) — the whole bottom of the range was one shade of
-# salmon. CRIT is deliberately soft because it is a warning tint on text; a bar
-# that is supposed to read as empty needs a real red.
-RAMP      = ((0.0, (72, 199, 116)),     # full
-             (0.50, (240, 185, 70)),    # amber
-             (0.78, (246, 105, 64)),    # orange-red
-             (1.0, (222, 42, 52)))      # empty
-# Domain hues, chosen by perceptual distance rather than by eye. CPU and GPU
-# share the history chart, so that pair matters most; disk no longer borrows
-# the GPU's violet. All four are brighter than they were — GPU by 9 points of
-# L* — which is as far as luminance goes before the pairs start closing on
-# each other again: the brightest set tested fell to dE 38.
-# Pairwise now: CPU-GPU 53, CPU-RAM 51, GPU-DISK 50, and 77+ for the rest.
+RAMP      = ((0.0, (72, 199, 116)),
+             (0.50, (240, 185, 70)),
+             (0.78, (246, 105, 64)),
+             (1.0, (222, 42, 52)))
 ACCENT    = (96, 176, 255)
 VIOLET    = (180, 120, 255)
-PINK      = (255, 96, 180)   # disk, which used to borrow the GPU's violet
+PINK      = (255, 96, 180)
 TEAL      = (48, 228, 236)
 CORAL     = (224, 128, 93)
 AMBER     = (240, 176, 80)
 GREEN     = (72, 199, 116)
 DARKRED   = (186, 66, 66)
-RED       = (233, 84, 82)     # thermals title — heat, and clear of CORAL/PINK
+RED       = (233, 84, 82)
 
-# Power direction, stored per history sample. Three states rather than a
-# boolean: a full battery on AC is neither charging nor discharging, and
-# recording it as "not charging" painted an idle machine as if it were
-# running down its battery.
-CHG_OUT   = 0.0         # on battery, power coming out
-CHG_IDLE  = 0.5         # on AC, nothing flowing
-CHG_IN    = 1.0         # charging, power going in
-CHG_OUT_MAX = 0.25      # above this a column counts as mains-supplied
+CHG_OUT   = 0.0
+CHG_IDLE  = 0.5
+CHG_IN    = 1.0
+CHG_OUT_MAX = 0.25
 WARN      = (255, 181, 84)
 CRIT      = (255, 95, 109)
 TRACK     = (255, 255, 255, 22)
@@ -158,19 +127,15 @@ def ramp_rgb(t):
     return RAMP[-1][1]
 
 
-# Air temperature to colour, by human comfort/danger rather than by a device's
-# thermal limit (temp_gradient does that). Both extremes are hazardous, so it
-# is two-sided: deep cold reads icy blue, heat reads amber then red, and an
-# ordinary comfortable range stays plain white so it does not cry wolf.
 WEATHER_TEMP_STOPS = (
-    (-15, (128, 158, 255)),   # extreme cold  — saturated icy blue
-    (-5,  (108, 178, 255)),   # cold          — blue
-    (4,   (168, 206, 248)),   # chilly        — pale blue
-    (13,  TEXT),              # comfortable   — white
-    (25,  TEXT),              # comfortable   — white
-    (31,  (240, 176, 80)),    # warm          — amber
-    (37,  (246, 105, 64)),    # hot           — orange-red
-    (43,  (222, 42, 52)),     # dangerous heat— red
+    (-15, (128, 158, 255)),
+    (-5,  (108, 178, 255)),
+    (4,   (168, 206, 248)),
+    (13,  TEXT),
+    (25,  TEXT),
+    (31,  (240, 176, 80)),
+    (37,  (246, 105, 64)),
+    (43,  (222, 42, 52)),
 )
 
 
@@ -213,7 +178,6 @@ def state_color(pct, base=ACCENT):
     return base
 
 
-# ---------------------------------------------------------------- fonts
 FONT_DIR = os.path.join(HOME, ".local/share/fonts")
 _FONT_CACHE = {}
 
@@ -245,7 +209,6 @@ def F(path, size):
     return _FONT_CACHE[key]
 
 
-# ---------------------------------------------------------------- draw helpers
 def measure(f, s, tracking=0):
     if not s:
         return 0
@@ -302,7 +265,7 @@ def bar(img, x, y, w, h, frac, color=None, track=TRACK, ramp=False):
     frac = max(0.0, min(1.0, frac))
     fw = frac * Wp
     if fw >= 1:
-        fw = max(fw, Hp)  # keep the pill readable at tiny values
+        fw = max(fw, Hp)
         shape = Image.new("L", tile.size, 0)
         ImageDraw.Draw(shape).rounded_rectangle(
             [pad, pad, pad + fw, pad + Hp], radius=r, fill=255)
@@ -314,7 +277,6 @@ def bar(img, x, y, w, h, frac, color=None, track=TRACK, ramp=False):
             if ramp:
                 sp[i, 0] = (*ramp_rgb(t), int(215 + 40 * t))
             else:
-                # dimmer at the start, full accent at the head
                 sp[i, 0] = (*color, int(120 + 135 * t))
         fill = Image.new("RGBA", tile.size, (0, 0, 0, 0))
         fill.paste(strip.resize((int(Wp), int(Hp) + 1)), (pad, pad))
@@ -384,8 +346,6 @@ def draw_weather_icon(img, cx, cy, s, code):
             yy = C + R * (0.7 + i * 0.42)
             d.line([(C - R * 1.4, yy), (C + R * 1.4, yy)], fill=(*CLOUD, 200), width=int(gs * 1.3))
     elif grp == "cloud":
-        # no precipitation hanging below, so centre the cloud in the tile
-        # instead of leaving it floating high with an empty lower half
         cloud(C, C, R * 0.85)
     else:
         cloud(C, C - R * 0.35, R * 0.85)
@@ -496,8 +456,6 @@ def _series_cols(key, n):
     together; rescanning every sample for every column made this O(columns x
     samples) and cost 17ms a frame once the window grew to an hour."""
     now = time.time()
-    # anything past the left edge is dropped: render() trims to HIST_MAX_AGE + 5,
-    # so a couple of samples always sit just outside it
     pts = [(now - s.get("t", now), s[key]) for s in HISTORY
            if s.get(key) is not None and now - s.get("t", now) < HIST_MAX_AGE]
     if not pts:
@@ -506,7 +464,7 @@ def _series_cols(key, n):
     ages = [((denom - i) / denom) ** HIST_GAMMA * HIST_MAX_AGE for i in range(n)]
 
     cols = []
-    last = pts[0][1]          # oldest sample, carried into any empty column
+    last = pts[0][1]
     j = 0
     for i in range(n):
         lo = ages[i + 1] if i + 1 < n else 0.0
@@ -536,7 +494,7 @@ def _cols_into(tile, ox, oy, w, h, cols, ymax, color, colw, gap, up=True, colors
         bx = ox + i * (colw + gap) * SS
         bh = frac * h
         if bh < 1:
-            bh = 1.2 * SS          # keep a baseline tick so the axis stays visible
+            bh = 1.2 * SS
         a = int(55 + 193 * frac)
         c = colors[i] if colors else color
         box = ([bx, oy + h - bh, bx + colw * SS, oy + h] if up
@@ -569,8 +527,6 @@ def histogram(img, x, y, w, h, key, color, floor=None, clamp=None, colw=3, gap=1
     _cols_into(tile, pad, pad, Wp, Hp, cols, ymax, color, colw, gap, colors=ccols)
 
     if ocols:
-        # second series as a line over the columns: two metrics, one axis, and
-        # you can see whether GPU load tracks CPU load or moves on its own
         pts = [(pad + i * (colw + gap) * SS + colw * SS / 2,
                 pad + Hp - max(0.0, min(1.0, v / ymax)) * Hp) for i, v in enumerate(ocols)]
         if len(pts) > 1:
@@ -616,7 +572,7 @@ def power_chart(img, x, y, w, h, floor=None):
             frac = max(0.0, min(1.0, value / ymax))
             bh = frac * Hp
             if bh < 1:
-                bh = 1.2 * SS if col is not GREEN else 0    # keep an axis tick
+                bh = 1.2 * SS if col is not GREEN else 0
             if bh <= 0:
                 continue
             td.rectangle([bx, base - bh, bx + bw, base], fill=(*col, int(55 + 193 * frac)))
@@ -626,17 +582,6 @@ def power_chart(img, x, y, w, h, floor=None):
     img.alpha_composite(tile.filter(ImageFilter.GaussianBlur(1.8 * SS)), (X - pad, Y - pad))
     img.alpha_composite(tile, (X - pad, Y - pad))
 
-    # Trace across the tops of the stacks: reading a total off two stacked
-    # segments means judging where one ends and estimating the sum, and the
-    # line states it directly. Drawn after the glow so it stays crisp.
-    #
-    # It stays continuous but changes colour: white where the wall supplies
-    # the total, red where the pack does. Breaking it instead was honest but
-    # chopped the trace up. The red is the brighter CRIT rather than the
-    # columns' own DARKRED, which would vanish against them.
-    # A dark pass slightly wider than the line goes down first. The trace runs
-    # over columns of every colour, and without that separation it reads as
-    # part of whatever it happens to cross.
     lw = max(1, int(1.9 * SS))
     shadow = Image.new("RGBA", tile.size, (0, 0, 0, 0))
     sd = ImageDraw.Draw(shadow)
@@ -649,8 +594,6 @@ def power_chart(img, x, y, w, h, floor=None):
     ld = ImageDraw.Draw(line)
     for (x0, y0, ac0), (x1, y1, _) in zip(tops, tops[1:]):
         ld.line([(x0, y0), (x1, y1)], fill=(*(TEXT if ac0 else CRIT), 255), width=lw)
-    # segments are drawn opaque and each layer faded once afterwards, so
-    # overlapping joints do not stack up into darker blobs
     line.putalpha(line.getchannel("A").point(lambda v: v * 240 // 255))
     img.alpha_composite(line, (X - pad, Y - pad))
     return ymax
@@ -671,14 +614,12 @@ def net_chart(img, x, y, w, h, color_down, color_up, floor=None):
 
     X, Y = int(x * SS), int(y * SS)
     Wp, Hp = int(w * SS), int(h * SS)
-    split = int(7 * SS)                  # dead space between the two bands
+    split = int(7 * SS)
     half = (Hp - split) // 2
     pad = 4 * SS
     top_y, bot_y = pad, pad + half + split
     size = (Wp + 2 * pad, Hp + 2 * pad)
 
-    # bands and baselines are flat backdrop, drawn separately from the data so
-    # the glow pass below doesn't smear their edges into halos
     bands = Image.new("RGBA", size, (0, 0, 0, 0))
     bd = ImageDraw.Draw(bands)
     bd.rectangle([pad, top_y, pad + Wp, top_y + half], fill=(*color_down, 15))
@@ -697,7 +638,6 @@ def net_chart(img, x, y, w, h, color_down, color_up, floor=None):
     return ymax
 
 
-# ---------------------------------------------------------------- formatting
 def fmt_bytes(n, per_sec=False):
     n = float(n)
     for unit, div in (("G", 1 << 30), ("M", 1 << 20), ("K", 1 << 10)):
@@ -720,7 +660,6 @@ def fmt_dur(secs):
     return f"{m}m"
 
 
-# ---------------------------------------------------------------- metrics
 _DETECTED = {}
 
 
@@ -734,7 +673,7 @@ def _detect(key, finder):
         return val
     found = finder()
     if found is None and val is not None:
-        return val                      # keep the last good one over a blip
+        return val
     _DETECTED[key] = (now, found)
     return found
 
@@ -880,7 +819,7 @@ def gpu_engine_snapshot():
                 totals[key] = totals.get(key, 0) + v
             elif tag == "cyc":
                 totals["cyc:" + cls] = totals.get("cyc:" + cls, 0) + v
-            else:                                   # tot: reference, take the max
+            else:
                 totals["tot:" + cls] = max(totals.get("tot:" + cls, 0), v)
     return totals
 
@@ -917,7 +856,6 @@ def gpu_source():
             return ("fdinfo",)
         if "nvidia" in drv and shutil.which("nvidia-smi"):
             return ("nvsmi",)
-        # last resort: an fdinfo-capable card we didn't recognise by driver
         if glob.glob("/dev/dri/renderD*") and gpu_engine_snapshot():
             return ("fdinfo",)
         return ""
@@ -946,7 +884,6 @@ def diskio_sectors():
             for line in f:
                 fl = line.split()
                 name = fl[2]
-                # physical devices only; skip partitions and virtual devices
                 if name.startswith(("loop", "ram", "dm-", "zram")):
                     continue
                 if name[-1].isdigit() and not name.startswith("nvme"):
@@ -960,7 +897,6 @@ def diskio_sectors():
     return r * 512, w * 512
 
 
-# hwmon chip names that are a wireless radio, for the wifi temperature.
 WIFI_DRIVERS = ("iwlwifi", "iwlmvm", "ath9k", "ath10k", "ath11k", "ath12k",
                 "mt7921", "mt7922", "mt7915", "mt7925", "rtw88", "rtw89",
                 "mwifiex", "brcmfmac")
@@ -997,17 +933,17 @@ def _zone_temp(match):
 
 def _find_cpu_temp():
     hw = _hwmon_list()
-    for name, h in hw:                          # Intel
+    for name, h in hw:
         if name == "coretemp":
             p = _hwmon_temp_input(h, ("Package id 0",))
             if p:
                 return p
-    for name, h in hw:                          # AMD
+    for name, h in hw:
         if name == "k10temp":
             p = _hwmon_temp_input(h, ("Tdie", "Tctl"))
             if p:
                 return p
-    for name, h in hw:                          # other SoCs named for the CPU
+    for name, h in hw:
         if "cpu" in name.lower() or name in ("soc", "soc_thermal"):
             p = _hwmon_temp_input(h)
             if p:
@@ -1020,12 +956,12 @@ def _find_cpu_temp():
 
 def _find_disk_temp():
     hw = _hwmon_list()
-    for name, h in hw:                          # NVMe
+    for name, h in hw:
         if name == "nvme":
             p = _hwmon_temp_input(h, ("Composite",))
             if p:
                 return p
-    for name, h in hw:                          # SATA/other drives (drivetemp)
+    for name, h in hw:
         if name == "drivetemp":
             p = _hwmon_temp_input(h)
             if p:
@@ -1095,7 +1031,7 @@ def rapl_source():
         best = None
         for d in sorted(glob.glob("/sys/class/powercap/*:[0-9]")):
             if os.path.basename(d).count(":") != 1:
-                continue                 # skip sub-zones (intel-rapl:0:1 = dram)
+                continue
             try:
                 with open(f"{d}/energy_uj") as f:
                     f.read()
@@ -1122,7 +1058,7 @@ def rapl_watts(prev_uj, elapsed):
         return None, now_uj, name
     delta = now_uj - prev_uj
     if delta < 0:
-        delta += rng                    # counter wrapped at max_energy_range_uj
+        delta += rng
     if delta < 0:
         return None, now_uj, name
     return delta / 1e6 / elapsed, now_uj, name
@@ -1141,19 +1077,18 @@ def battery():
     cap = read_first(f"{bat}/capacity", int, 0)
     status = read_first(f"{bat}/status", default="Unknown")
     volt = read_first(f"{bat}/voltage_now", int, 0) or 0
-    power_uw = read_first(f"{bat}/power_now", int)      # energy model, if present
-    cur = read_first(f"{bat}/current_now", int)         # charge model, maybe signed
+    power_uw = read_first(f"{bat}/power_now", int)
+    cur = read_first(f"{bat}/current_now", int)
     if power_uw is not None:
         watts = abs(power_uw) / 1e6
     elif cur is not None and volt:
         watts = abs(cur) / 1e6 * (volt / 1e6)
     else:
         watts = 0.0
-    # remaining / full and the rate that empties or fills it, in matching units
     now = read_first(f"{bat}/charge_now", int)
     full = read_first(f"{bat}/charge_full", int)
     rate = abs(cur) if cur is not None else None
-    if now is None:                                     # energy model
+    if now is None:
         now = read_first(f"{bat}/energy_now", int)
         full = read_first(f"{bat}/energy_full", int)
         rate = abs(power_uw) if power_uw is not None else None
@@ -1199,7 +1134,6 @@ def top_procs(prev, elapsed):
     return cur, rows
 
 
-# ---------------------------------------------------------------- cached shell-outs
 _INFLIGHT = set()
 _INFLIGHT_LOCK = threading.Lock()
 
@@ -1249,7 +1183,6 @@ def cached_cmd(name, argv, ttl, ok_prefix=None, fail_ttl=60):
     return cached
 
 
-# ---------------------------------------------------------------- state
 def load_json(path, default):
     try:
         with open(path) as f:
@@ -1266,9 +1199,9 @@ def save_json(path, data):
 
 
 HISTORY = []
-_STATE = None           # previous sample, kept in memory between frames
-_PERSISTED = 0.0        # when state/history last reached disk
-PERSIST_EVERY = 30      # seconds
+_STATE = None
+_PERSISTED = 0.0
+PERSIST_EVERY = 30
 
 
 _PANEL_CACHE = {}
@@ -1298,8 +1231,6 @@ def panel_bg(H):
     ImageDraw.Draw(panel).rounded_rectangle(
         [0, 0, W * SS - 1, H * SS - 1], radius=18 * SS, outline=HAIRLINE, width=max(1, SS))
 
-    # top highlight, so the panel reads as glass rather than a flat rectangle.
-    # Only the top strip is blurred; the rest of the canvas contributed nothing.
     strip_h = 90 * SS
     hl = Image.new("RGBA", (W * SS, strip_h), (0, 0, 0, 0))
     ImageDraw.Draw(hl).rounded_rectangle(
@@ -1307,7 +1238,7 @@ def panel_bg(H):
     hl = hl.filter(ImageFilter.GaussianBlur(6 * SS))
     panel.alpha_composite(hl, (0, 0))
 
-    _PANEL_CACHE.clear()          # only one height is ever live
+    _PANEL_CACHE.clear()
     _PANEL_CACHE[H] = panel
     return panel
 
@@ -1315,15 +1246,11 @@ def panel_bg(H):
 def render(write_png=True):
     global HISTORY, FLEX, FLEX_POINTS, _STATE, _PERSISTED
     now = time.time()
-    # The renderer is long-lived, so round-tripping ~420 process counters and
-    # 450 history samples through JSON every 2s was pure overhead. Disk is only
-    # touched every PERSIST_EVERY seconds, to give a restart a warm start.
     prev = _STATE if _STATE is not None else load_json(STATE_FILE, {})
     elapsed = max(0.001, now - prev.get("t", now - 2))
     if not prev or elapsed > 60:
         elapsed = 2.0
 
-    # ---- sample
     idle, total = cpu_jiffies()
     di = idle - prev.get("cpu_idle", idle)
     dt = total - prev.get("cpu_total", total)
@@ -1342,7 +1269,7 @@ def render(write_png=True):
 
     gsrc = gpu_source()
     gpu_snap = {}
-    gpu_pct = None                       # None -> no readable GPU, gauge hidden
+    gpu_pct = None
     if gsrc and gsrc[0] == "busy":
         v = read_first(gsrc[1], int)
         gpu_pct = float(v) if v is not None else None
@@ -1353,16 +1280,16 @@ def render(write_png=True):
             gpu_pct = float(raw.strip().splitlines()[0])
         except (ValueError, IndexError):
             gpu_pct = None
-    elif gsrc:                            # fdinfo
+    elif gsrc:
         gpu_snap = gpu_engine_snapshot()
         gpu_prev = prev.get("gpu", {})
         g = 0.0
         ns_keys = [k for k in gpu_snap if k.startswith("drm-engine-")]
-        if ns_keys:                       # busy-nanoseconds model (i915, amdgpu)
+        if ns_keys:
             for k in ns_keys:
                 if k in gpu_prev:
                     g = max(g, 100.0 * (gpu_snap[k] - gpu_prev[k]) / (elapsed * 1e9))
-        else:                             # busy/elapsed-cycles model (xe)
+        else:
             for k in gpu_snap:
                 if not k.startswith("cyc:"):
                     continue
@@ -1379,7 +1306,7 @@ def render(write_png=True):
     iface = net_iface()
     rx, tx = net_bytes(iface) if iface else (0, 0)
     if prev.get("iface") != iface:
-        down = up = 0.0          # counters restart on a different interface
+        down = up = 0.0
     else:
         down = max(0.0, (rx - prev.get("rx", rx)) / elapsed)
         up = max(0.0, (tx - prev.get("tx", tx)) / elapsed)
@@ -1390,22 +1317,13 @@ def render(write_png=True):
 
     cap, bstatus, batt_w, eta, batt_v = battery()
     watts = batt_w
-    # One consistent basis for the whole chart when RAPL is readable: the
-    # battery figure drops to zero on mains, which is a measurement gap, not
-    # an idle machine.
     rapl_w, rapl_uj, rapl_name = rapl_watts(prev.get("rapl_uj"), elapsed)
     power_src = rapl_name if rapl_w is not None else "battery"
-    # Power into the pack, kept apart from consumption. Only separable when
-    # RAPL measures consumption independently — psys does not include the
-    # charge current, verified against the battery's own reading. Without RAPL
-    # `watts` IS the charge current while charging, so splitting it would
-    # count the same energy twice.
     charge_w = 0.0
     if rapl_w is not None:
         if bstatus == "Charging":
             charge_w = batt_w
         watts = rapl_w
-    # everything the wall supplies: the machine, plus whatever tops up the pack
     ac_w = (watts + charge_w) if bstatus != "Discharging" else 0.0
     mi = meminfo()
     mem_used = mi["MemTotal"] - mi.get("MemAvailable", mi["MemFree"])
@@ -1429,19 +1347,12 @@ def render(write_png=True):
                               ok_prefix="Session")
     weather_raw = cached_cmd("weather", [f"{CONF_DIR}/weather.py"], 900, ok_prefix="{")
 
-    # ---- history
     if not HISTORY:
         HISTORY = load_json(HISTORY_FILE, [])
         if not isinstance(HISTORY, list):
             HISTORY = []
-    # samples recorded before "chg" existed would otherwise be skipped by the
-    # colour series, which carries the next known value backwards and paints
-    # historic discharge as charging. Unknown means "on battery".
     for sample in HISTORY:
         sample.setdefault("chg", CHG_OUT)
-    # Rounded on the way in. Fifteen decimal places of a CPU percentage are
-    # noise no chart can draw, and at an hour of samples it is the difference
-    # between a 344KB file and a 208KB one, rewritten every 30 seconds.
     HISTORY.append({"t": round(now, 1), "cpu": round(cpu_pct, 2),
                     "gpu": round(gpu_pct if have_gpu else 0.0, 2), "down": round(down),
                     "up": round(up), "power": round(watts, 2),
@@ -1456,24 +1367,17 @@ def render(write_png=True):
         "rapl_uj": rapl_uj,
     }
 
-    # ---- render
     FLEX = float(prev.get("flex", 0.0))
     FLEX_POINTS = 0
     img = Image.new("RGBA", (W * SS, 1400 * SS), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
     y = 22
-    R = W - PAD  # right edge for right-aligned text
+    R = W - PAD
 
     f_val    = F(MONO_MED, T_VALUE)
     f_val_sm = F(MONO_REG, T_BODY)
     f_big    = F(MONO_LIGHT, T_LEAD)
 
-    # ============ TOP SLOT: CLAUDE / WEATHER ======================
-    # Claude quota when there is a subscription to report on; weather when
-    # there is not (no CLI, no Pro/Max, a lapsed login). When BOTH are
-    # available the slot alternates between them every ALT_PERIOD seconds —
-    # no hover, because the panel takes no mouse events by design; the switch
-    # is on a wall-clock timer, so it just cycles on its own.
     sess = week = None
     if "Session" in claude_quota:
         try:
@@ -1506,14 +1410,9 @@ def render(write_png=True):
     else:
         slot = None
 
-    # Fixed height for the top slot so the panel does not resize as it swaps
-    # between Claude and weather (they differ in natural height, which otherwise
-    # jogged everything below by a frame on every switch). Both render inside
-    # SLOT_H and y is snapped to it.
     SLOT_H = 95
     slot_start = y
     if slot == "claude":
-        # heavier title and larger figures than the sections below it
         label(d, PAD, y, "claude", CORAL, tracking=2.4)
         y += 23
         for name, item in (("session", sess), ("week", week)):
@@ -1533,25 +1432,17 @@ def render(write_png=True):
         if weather.get("name"):
             label_r(d, R, y, weather["name"], TEXT, size=T_MICRO)
         t = weather["temp"]
-        # Hero band: a large icon and big white temperature, centred as a group
-        # in the middle of the slot. No condition text — the icon already says
-        # what the sky is doing, so the space goes to making the reading big and
-        # legible instead. The detail row is pinned to the bottom, so the slot
-        # fills its fixed 95px top-to-bottom rather than clustering under the
-        # title the way it used to.
         f_temp = F(MONO_LIGHT, T_HERO)
         icon_s = 22
         ttxt = f"{t}°"
         tw = measure(f_temp, ttxt) / SS
-        iw = icon_s * 2.5          # icon glyph's visual width
+        iw = icon_s * 2.5
         gap_it = 14
         group_w = iw + gap_it + tw
         gx = PAD + (CW - group_w) / 2.0
         hero_cy = slot_start + 46
         draw_weather_icon(img, gx + iw / 2, hero_cy, icon_s, weather.get("code", 3))
         text(d, gx + iw + gap_it, hero_cy - 21, ttxt, f_temp, TEXT)
-        # Detail row: three stats spread across the width, pinned near the
-        # bottom, each a small-caps label paired with a value — all white.
         dy = slot_start + 80
         f_dv = F(MONO_REG, T_VALUE)
         f_dl = F(UI_SEMI, T_MICRO)
@@ -1573,13 +1464,10 @@ def render(write_png=True):
         y = slot_start + SLOT_H
         y += gap(26)
 
-    # ============ HEADER =========================================
     label(d, PAD, y, "uptime", ACCENT)
     label_r(d, R, y, "load 1·5·15m", ACCENT)
     y += 14
     text(d, PAD, y, fmt_dur(uptime), f_big, TEXT)
-    # each average coloured by its own value, so a red-amber-grey run reads as
-    # "spiking now, was fine a quarter of an hour ago" at a glance
     f_load = F(MONO_REG, T_VALUE)
     lx = R
     for v in reversed(load):
@@ -1588,11 +1476,6 @@ def render(write_png=True):
         lx -= measure(f_load, v) / SS + 9
     y += gap(40)
 
-    # ============ GAUGES (hero row) ==============================
-    # Donuts carry the "how loaded is this machine" answer on their own, so the
-    # sections below can stay quiet and detailed. GPU joins CPU and RAM only
-    # when its utilisation is actually readable; otherwise it is dropped and the
-    # remaining two share the width.
     gr, gth = 46, 9
     gauges = [("cpu", cpu_pct, ACCENT)]
     if have_gpu:
@@ -1605,23 +1488,19 @@ def render(write_png=True):
         col = state_color(pct, hue)
         gauge(img, cx, cy, gr, gth, pct / 100, col)
         big, unit = f"{pct:.0f}", "%"
-        # number and unit set as one centred group, so "%" hangs off the value
-        # instead of floating in the gap at the bottom of the ring
         f_g, f_u = F(MONO_LIGHT, T_HERO), F(MONO_REG, T_BODY)
         bw, uw = measure(f_g, big) / SS, measure(f_u, unit) / SS
         x0 = cx - (bw + 2 + uw) / 2
         text(d, x0, cy - 18, big, f_g, TEXT)
         text(d, x0 + bw + 3, cy - 6, unit, f_u, TEXT)
-        # centring a letterspaced label means measuring it with the tracking in
         lw = measure(F(UI_SEMI, T_LABEL), name.upper(), 1.8) / SS
         label(d, cx - lw / 2, cy + gr + 10, name, hue, tracking=1.8)
     y += 2 * gr + gap(36)
 
-    # ============ PER-CORE =======================================
     label(d, PAD, y, "cores", ACCENT)
     rx_ = R
     ghz = cpu_freq_ghz()
-    if ghz > 0:                          # some VMs and ARM parts expose no clock
+    if ghz > 0:
         clock = f"{ghz:.2f} GHz"
         text(d, rx_, y - 1, clock, F(MONO_REG, T_BODY), TEXT, anchor="r")
         rx_ -= measure(F(MONO_REG, T_BODY), clock) / SS + 12
@@ -1630,32 +1509,22 @@ def render(write_png=True):
     core_strip(img, PAD, y, CW, 24, core_loads)
     y += 24 + gap(14)
 
-    # ============ CPU / GPU HISTORY ==============================
     label(d, PAD, y, "history", ACCENT)
     label_r(d, R, y, "60 min", TEXT)
     y += 15
     histogram(img, PAD, y, CW, 64, "cpu", ACCENT, floor=10, clamp=100,
               overlay="gpu" if have_gpu else None, overlay_color=VIOLET)
     y += 64 + 7
-    # the two-series legend only earns its space when the GPU line is drawn
     if have_gpu:
         lx = PAD
         for col, txt in ((ACCENT, "cpu"), (VIOLET, "gpu")):
             swatch(d, lx, y, col)
-            # label in the series colour too, so the pairing survives even where
-            # the swatch is small
             text(d, lx + 12, y, txt, F(UI_MED, T_LABEL), col)
             lx += 12 + measure(F(UI_MED, T_LABEL), txt) / SS + 18
         y += 24
     else:
         y += 6
 
-    # ============ THERMALS =======================================
-    # The three device sensors this machine actually labels — CPU package, the
-    # SSD and the wifi radio — shown together, sitting under the history so the
-    # reading is the system's thermal picture rather than a lone CPU number.
-    # Values ride the green->amber->red gradient by how close each is to its own
-    # warn/crit, so a cool part reads calm and a hot one stands out.
     therms = (("cpu", cpu_t, 80, 95), ("ssd", nvme_t, 65, 75),
               ("wifi", wifi_t, 75, 85))
     f_tl, f_tv = F(UI_SEMI, T_MICRO), F(MONO_REG, T_BODY)
@@ -1667,8 +1536,6 @@ def render(write_png=True):
         lw = measure(f_tl, lab.upper(), 1.4) / SS
         vw = measure(f_tv, val) / SS
         groups.append((lab.upper(), lw, val, vw, temp_gradient(tv, warn, crit)))
-    # nothing to show on a machine that exposes no temperatures at all: drop the
-    # whole row, its title and its gap, rather than leaving a labelled blank
     if groups:
         label(d, PAD, y, "thermals", RED)
         gap_lv, gap_gg = 6, 20
@@ -1680,7 +1547,6 @@ def render(write_png=True):
             gx += lw + gap_lv + vw + gap_gg
         y += gap(33)
 
-    # ============ MEMORY =========================================
     mfrac = mem_used / mem_total
     label(d, PAD, y, "memory", TEAL)
     text(d, R, y - 2, f"{fmt_bytes(mem_used)} / {fmt_bytes(mem_total)}", f_val, TEXT, anchor="r")
@@ -1697,7 +1563,6 @@ def render(write_png=True):
         y += 8
     y += gap(22)
 
-    # ============ DISK ===========================================
     dfrac = disk_used / disk_total
     label(d, PAD, y, "disk", PINK)
     text(d, R, y - 2, f"{fmt_bytes(disk_used)} / {fmt_bytes(disk_total)}", f_val, TEXT, anchor="r")
@@ -1710,7 +1575,6 @@ def render(write_png=True):
     text(d, R - measure(f_val_sm, fmt_bytes(wr, True)) / SS - 9, y, "write", F(UI_MED, T_BODY), TEXT, anchor="r")
     y += gap(30)
 
-    # ============ NETWORK ========================================
     label(d, PAD, y, "network", ACCENT)
     y += 16
     peak = net_chart(img, PAD, y, CW, 60, ACCENT, CORAL, floor=64 * 1024)
@@ -1720,24 +1584,14 @@ def render(write_png=True):
     text(d, R, y, f"↑ {fmt_bytes(up, True)}", f_val_sm, CORAL, anchor="r")
     y += gap(30)
 
-    # ============ POWER ==========================================
-    # have_battery: a laptop pack is present. have_power: something can report
-    # consumption — RAPL, or the battery's own current. A desktop has no
-    # battery, so its power row shows just the draw and drops the AC/charge
-    # split and the direction legend, and there is no battery row at all.
     charging = bstatus == "Charging"
     have_battery = bstatus != "no battery"
     have_power = power_src != "battery" or have_battery
     if have_power:
         label(d, PAD, y, "power", AMBER)
-        # While charging the wall feeds two things, so show them as two figures
-        # rather than one sum: what the machine draws, and what the wall delivers
-        # in total, the difference being whatever goes into the pack.
         ux = R
         if ac_w > 0.05 and have_battery:
             atxt = f"{ac_w:.1f} W"
-            # the total, so neutral: sum of the amber consumption and the green
-            # charge, and painting it amber made the two figures blur together
             text(d, ux, y - 2, atxt, f_val, TEXT, anchor="r")
             ux -= measure(f_val, atxt) / SS + 6
             label_r(d, ux, y, "ac", TEXT, size=T_MICRO)
@@ -1748,14 +1602,11 @@ def render(write_png=True):
         ux -= measure(f_val, dtxt) / SS + 6
         label_r(d, ux, y, "device", TEXT, size=T_MICRO)
         ux -= measure(F(UI_SEMI, T_MICRO), "DEVICE", 1.6) / SS + 14
-        # the battery fallback reads 0W on mains, which is a measurement gap
-        # rather than an idle machine, and that is worth saying on the panel
         if power_src == "battery":
             label_r(d, ux, y, "battery", TEXT, size=T_MICRO)
         y += 16
         power_chart(img, PAD, y, CW, 30, floor=8)
         y += 30
-        # the direction legend only means anything with a battery to flow to/from
         if have_battery:
             y += 7
             lx = PAD
@@ -1767,34 +1618,23 @@ def render(write_png=True):
             y += 12
         y += gap(20)
 
-    # ============ BATTERY ========================================
     if have_battery:
-        # Charging outranks the level: a battery at 20% that is plugged in is not
-        # a problem, so it gets the "gaining" colour rather than a red warning.
-        # On battery the fill tracks what is left, green through amber to red.
-        # Two colours: bcol is about the LEVEL and drives the bar and the
-        # percentage; scol is about the DIRECTION and drives the status word and
-        # the wattage. Sharing one made "discharging" render green near full.
         full = bstatus == "Full" or cap >= 100
         if charging or full:
-            bcol = GREEN          # gaining, or topped up — a good state, so green
+            bcol = GREEN
         elif bstatus == "Discharging":
             bcol = ramp_rgb(1 - cap / 100)
         else:
-            bcol = STEEL          # on AC, holding below full (e.g. a charge limit)
+            bcol = STEEL
         scol = GREEN if (charging or full) else (DARKRED if bstatus == "Discharging" else TEXT)
         label(d, PAD, y, "battery", AMBER)
         if batt_v > 0.05:
-            # this pack has no temperature sensor, so the spot where the other
-            # sections carry their temperature carries the terminal voltage
             text(d, PAD + measure(F(UI_SEMI, T_LABEL), "BATTERY", 1.6) / SS + 11, y - 1,
                  f"{batt_v:.1f} V", F(MONO_REG, T_BODY), TEXT)
         bx = R
         if eta:
             text(d, bx, y - 1, fmt_dur(eta), F(MONO_REG, T_BODY), TEXT, anchor="r")
             bx -= measure(F(MONO_REG, T_BODY), fmt_dur(eta)) / SS + 12
-        # power crossing the pack's own terminals, which belongs here rather than
-        # in the POWER row: that one is about the machine and the wall.
         if batt_w > 0.05 and bstatus in ("Charging", "Discharging"):
             wtxt = f"{batt_w:.1f} W"
             text(d, bx, y - 1, wtxt, F(MONO_REG, T_BODY), scol, anchor="r")
@@ -1807,11 +1647,6 @@ def render(write_png=True):
         y += 18
         y += gap(10)
 
-    # ============ TOP PROCESSES ==================================
-    # A usage bar behind each row turns two flat lists into something you can
-    # read the shape of without parsing the numbers. The leader of each list
-    # gets the bright name and a heavier figure, so the ranking reads at a
-    # glance without comparing values.
     def proc_list(y, title, hue, rows, value_of, fmt_of, colour_of,
                   right=None, total=None, curve=1.0):
         """total: denominator for the bars. Given one, a bar shows the share of
@@ -1844,19 +1679,7 @@ def render(write_png=True):
     y = proc_list(y, "top cpu", ACCENT, top_cpu,
                   value_of=lambda r: r[1],
                   fmt_of=lambda r: f"{r[1]:.1f}%",
-                  # No state escalation here: these are percentages of ONE
-                  # core, and the warn/crit thresholds were written for
-                  # system-wide load. A video decoder pegging a single core out
-                  # of twenty is routine, and painting that row red is a false
-                  # alarm. The bar length already carries the ranking.
                   colour_of=lambda r: ACCENT if r[1] > 1 else MUTE,
-                  # The bar measures against the WHOLE machine while the
-                  # figure beside it stays per-core. Against one core, every
-                  # multi-threaded process pinned the bar at full and 195%
-                  # looked identical to 150%. Same split as TOP MEMORY, where
-                  # the figure is absolute and the bar is a share of RAM:
-                  # the number says how hard one process is working, the bar
-                  # says how much of the machine that costs.
                   right="% of one core", total=100.0 * max(1, len(core_loads)),
                   curve=0.5)
     y += gap(14)
@@ -1865,33 +1688,22 @@ def render(write_png=True):
                   value_of=lambda r: r[2],
                   fmt_of=lambda r: fmt_bytes(r[2]),
                   colour_of=lambda r: TEAL,
-                  # same curve as TOP CPU: the two lists sit one above the
-                  # other and invite comparison, so they have to share a scale
                   right="share of ram", total=mem_total, curve=0.5)
 
     y += 22
     H = int(round(y))
 
-    # Height without any flex, i.e. what the content genuinely needs. Spreading
-    # (TARGET_H - natural) over the section boundaries lands the next frame on
-    # TARGET_H exactly, whatever the content is doing.
     natural = y - FLEX_POINTS * FLEX
     next_flex = 0.0
     if FLEX_POINTS:
         next_flex = max(0.0, min(FLEX_MAX, (TARGET_H - natural) / FLEX_POINTS))
 
-    # ---- glass panel behind everything ----------------------------
     panel = panel_bg(H)
 
     out = Image.alpha_composite(panel, img.crop((0, 0, W * SS, H * SS)))
-    # Exactly 2:1, so BOX is a true 2x2 average — textbook supersampling, and
-    # ~19ms/frame cheaper than LANCZOS, which at this ratio only adds ringing.
     out = out.resize((W, H), Image.BOX)
 
     if write_png:
-        # Only for screenshots and debugging now. Encoding the panel to PNG
-        # costs 21ms a frame against 4ms to hand the pixels straight to cairo,
-        # so the window path does not go through a file at all.
         tmp = f"{PNG_PATH}.{os.getpid()}.tmp"
         out.save(tmp, "PNG", compress_level=1)
         os.replace(tmp, PNG_PATH)
@@ -1936,7 +1748,7 @@ def surface_from(img):
     buf = bytearray(Image.merge("RGBA", (b, g, r, a)).tobytes())
     surf = cairo.ImageSurface.create_for_data(
         memoryview(buf), cairo.FORMAT_ARGB32, img.width, img.height, img.width * 4)
-    return surf, buf          # the buffer must outlive the surface
+    return surf, buf
 
 
 def run_window(interval=2.0):
@@ -1954,8 +1766,6 @@ def run_window(interval=2.0):
     win.set_app_paintable(True)
     win.set_decorated(False)
     win.set_resizable(False)
-    # below everything, on every workspace, invisible to the taskbar and the
-    # window switcher, and never taking focus
     win.set_type_hint(Gdk.WindowTypeHint.DESKTOP)
     win.set_skip_taskbar_hint(True)
     win.set_skip_pager_hint(True)
@@ -1979,8 +1789,6 @@ def run_window(interval=2.0):
         mon = (Gdk.Display.get_default().get_primary_monitor()
                or Gdk.Display.get_default().get_monitor(0))
         wa = mon.get_workarea()
-        # set_size_request, not resize: the window is set non-resizable, and GTK
-        # then sizes it from the content request and ignores resize() outright
         win.set_size_request(W, h)
         win.move(wa.x + wa.width - W - MARGIN, wa.y + MARGIN)
 
@@ -1992,8 +1800,6 @@ def run_window(interval=2.0):
         return False
 
     def on_realize(_w):
-        # clicks fall through to the desktop underneath; the panel has nothing
-        # to click and should not swallow a drag on the wallpaper
         win.get_window().input_shape_combine_region(cairo.Region(), 0, 0)
 
     def keep_above_desktop():
@@ -2049,16 +1855,11 @@ def run_window(interval=2.0):
 
 if __name__ == "__main__":
     if "--png" in sys.argv:
-        # one frame to cache/hud.png, for screenshots and for checking a change
-        # without disturbing the running panel
         render()
         for _t in threading.enumerate():
             if _t is not threading.main_thread():
                 _t.join(timeout=15)
     else:
-        # flock so a second copy exits instead of stacking a duplicate panel on
-        # the desktop. "a+" and not "w": opening for write TRUNCATES, and the
-        # losing copy would do that before it ever reaches the flock.
         _lock = open(LOCK_FILE, "a+")
         try:
             fcntl.flock(_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
