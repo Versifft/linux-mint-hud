@@ -14,6 +14,7 @@ import glob
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -820,8 +821,19 @@ def cpu_freq_ghz():
 
 
 def gpu_engine_snapshot():
-    """Sums drm-engine-* busy-time (ns) from /proc/*/fdinfo, deduped by
-    (pid, drm-client-id) since one process can hold several fds per client."""
+    """Per-engine GPU busy counters from /proc/*/fdinfo, deduped by
+    (pid, drm-client-id) since one process holds several fds per client.
+
+    Two counter shapes, because the drivers differ:
+      drm-engine-<c>:        busy nanoseconds (i915, amdgpu, most drivers)
+      drm-cycles-<c> +
+      drm-total-cycles-<c>:  busy vs. elapsed cycles (Intel xe — Arc, Lunar
+                             Lake and up)
+    Returned as one flat dict. Engine-ns keys keep their 'drm-engine-*' name;
+    the cycle model becomes 'cyc:<c>' (busy, summed over clients) and 'tot:<c>'
+    (the elapsed-cycles reference, the max over clients — it is a free-running
+    per-engine counter, so summing it would inflate the denominator). The
+    caller reads whichever model is present."""
     clients = {}
     with os.scandir("/proc") as it:
         pids = [e.path for e in it if e.name.isdigit()]
@@ -841,23 +853,75 @@ def gpu_engine_snapshot():
                 continue
             if "drm-driver:" not in content:
                 continue
-            cid, engines = None, {}
+            cid, counters = None, {}
             for line in content.splitlines():
                 if line.startswith("drm-client-id:"):
                     cid = line.split(":", 1)[1].strip()
-                elif line.startswith("drm-engine-") and "capacity" not in line:
-                    k, _, v = line.partition(":")
-                    try:
-                        engines[k.strip()] = int(v.strip().split()[0])
-                    except (ValueError, IndexError):
-                        pass
-            if cid and engines:
-                clients[(pid_dir, cid)] = engines
+                    continue
+                if "capacity" in line:
+                    continue
+                for pfx, tag in (("drm-engine-", "eng"),
+                                 ("drm-total-cycles-", "tot"),
+                                 ("drm-cycles-", "cyc")):
+                    if line.startswith(pfx):
+                        k, _, v = line.partition(":")
+                        try:
+                            counters[(tag, k[len(pfx):].strip())] = int(v.strip().split()[0])
+                        except (ValueError, IndexError):
+                            pass
+                        break
+            if cid and counters:
+                clients[(pid_dir, cid)] = counters
     totals = {}
-    for engines in clients.values():
-        for k, v in engines.items():
-            totals[k] = totals.get(k, 0) + v
+    for counters in clients.values():
+        for (tag, cls), v in counters.items():
+            if tag == "eng":
+                key = "drm-engine-" + cls
+                totals[key] = totals.get(key, 0) + v
+            elif tag == "cyc":
+                totals["cyc:" + cls] = totals.get("cyc:" + cls, 0) + v
+            else:                                   # tot: reference, take the max
+                totals["tot:" + cls] = max(totals.get("tot:" + cls, 0), v)
     return totals
+
+
+def _gpu_drivers():
+    """Kernel driver name behind each DRM card (i915, xe, amdgpu, nvidia,
+    nouveau, ...)."""
+    drv = set()
+    for c in glob.glob("/sys/class/drm/card[0-9]*/device/driver"):
+        try:
+            drv.add(os.path.basename(os.readlink(c)))
+        except OSError:
+            pass
+    return drv
+
+
+def gpu_source():
+    """How to read GPU utilisation on this machine, or None if there is no way.
+
+      ("busy", path)  amdgpu's gpu_busy_percent — an instantaneous 0..100
+      ("fdinfo",)     drm-engine busy-time deltas (Intel i915/xe, amdgpu, nouveau)
+      ("nvsmi",)      nvidia-smi, for the proprietary NVIDIA driver
+
+    Cached: probed once, since the GPU does not change under the running panel.
+    A machine with no usable source (headless, or NVIDIA with no nvidia-smi)
+    gets no GPU gauge rather than a dead one stuck at zero."""
+    def find():
+        drv = _gpu_drivers()
+        if "amdgpu" in drv:
+            for p in sorted(glob.glob("/sys/class/drm/card[0-9]*/device/gpu_busy_percent")):
+                if read_first(p, int) is not None:
+                    return ("busy", p)
+        if drv & {"i915", "xe", "amdgpu", "nouveau"}:
+            return ("fdinfo",)
+        if "nvidia" in drv and shutil.which("nvidia-smi"):
+            return ("nvsmi",)
+        # last resort: an fdinfo-capable card we didn't recognise by driver
+        if glob.glob("/dev/dri/renderD*") and gpu_engine_snapshot():
+            return ("fdinfo",)
+        return ""
+    return _detect("gpu_src", find) or None
 
 
 def net_bytes(iface):
@@ -896,25 +960,103 @@ def diskio_sectors():
     return r * 512, w * 512
 
 
-def temps():
-    """CPU package, NVMe and wifi radio temperatures, in degrees C.
+# hwmon chip names that are a wireless radio, for the wifi temperature.
+WIFI_DRIVERS = ("iwlwifi", "iwlmvm", "ath9k", "ath10k", "ath11k", "ath12k",
+                "mt7921", "mt7922", "mt7915", "mt7925", "rtw88", "rtw89",
+                "mwifiex", "brcmfmac")
 
-    The wifi sensor has no temp*_label, so it's addressed by hwmon name and
-    fixed input rather than by looking a label up."""
-    cpu = nvme = wifi = None
-    for h in glob.glob("/sys/class/hwmon/hwmon*"):
-        name = read_first(os.path.join(h, "name"), default="")
+
+def _hwmon_list():
+    """(name, dir) for every hwmon node."""
+    return [(read_first(f"{h}/name", default=""), h)
+            for h in glob.glob("/sys/class/hwmon/hwmon*")]
+
+
+def _hwmon_temp_input(h, labels=()):
+    """Path to a temp*_input under hwmon dir h: one whose *_label matches a
+    wanted label, else the lowest-numbered temp input; "" if it has none."""
+    have = {}
+    for lab in glob.glob(f"{h}/temp*_label"):
+        have[read_first(lab, default="")] = lab.replace("_label", "_input")
+    for w in labels:
+        p = have.get(w)
+        if p and os.path.exists(p):
+            return p
+    ins = sorted(glob.glob(f"{h}/temp*_input"))
+    return ins[0] if ins else ""
+
+
+def _zone_temp(match):
+    """A thermal_zone temp path whose type (lowercased) satisfies match()."""
+    for z in glob.glob("/sys/class/thermal/thermal_zone*"):
+        t = read_first(f"{z}/type", default="").lower()
+        if t and match(t) and os.path.exists(f"{z}/temp"):
+            return f"{z}/temp"
+    return ""
+
+
+def _find_cpu_temp():
+    hw = _hwmon_list()
+    for name, h in hw:                          # Intel
         if name == "coretemp":
-            for lab in glob.glob(os.path.join(h, "temp*_label")):
-                if read_first(lab, default="") == "Package id 0":
-                    cpu = read_first(lab.replace("_label", "_input"), int)
-        elif name == "nvme":
-            for lab in glob.glob(os.path.join(h, "temp*_label")):
-                if read_first(lab, default="") == "Composite":
-                    nvme = read_first(lab.replace("_label", "_input"), int)
-        elif name.startswith("iwlwifi"):
-            wifi = read_first(os.path.join(h, "temp1_input"), int)
-    return tuple(v / 1000 if v else None for v in (cpu, nvme, wifi))
+            p = _hwmon_temp_input(h, ("Package id 0",))
+            if p:
+                return p
+    for name, h in hw:                          # AMD
+        if name == "k10temp":
+            p = _hwmon_temp_input(h, ("Tdie", "Tctl"))
+            if p:
+                return p
+    for name, h in hw:                          # other SoCs named for the CPU
+        if "cpu" in name.lower() or name in ("soc", "soc_thermal"):
+            p = _hwmon_temp_input(h)
+            if p:
+                return p
+    return (_zone_temp(lambda t: t in ("x86_pkg_temp", "cpu-thermal", "cpu_thermal")
+                       or "cpu" in t or "pkg" in t or "tctl" in t
+                       or "soc" in t or "cluster" in t or "bigcore" in t)
+            or _zone_temp(lambda t: t == "acpitz"))
+
+
+def _find_disk_temp():
+    hw = _hwmon_list()
+    for name, h in hw:                          # NVMe
+        if name == "nvme":
+            p = _hwmon_temp_input(h, ("Composite",))
+            if p:
+                return p
+    for name, h in hw:                          # SATA/other drives (drivetemp)
+        if name == "drivetemp":
+            p = _hwmon_temp_input(h)
+            if p:
+                return p
+    return ""
+
+
+def _find_wifi_temp():
+    for name, h in _hwmon_list():
+        nl = name.lower()
+        if any(nl == d or nl.startswith(d) for d in WIFI_DRIVERS):
+            p = _hwmon_temp_input(h)
+            if p:
+                return p
+    return _zone_temp(lambda t: any(d in t for d in ("iwlwifi", "wifi", "wlan", "ath")))
+
+
+def temps():
+    """CPU, drive and wifi-radio temperatures in degrees C, each None when the
+    machine exposes no matching sensor. Detection is cached — its absence too —
+    so it costs one hwmon scan per DETECT_TTL, not one per frame, and it spans
+    vendors: Intel coretemp / AMD k10temp / a CPU thermal zone; NVMe or a SATA
+    drivetemp; any known wireless chip."""
+    paths = (_detect("cpu_temp", _find_cpu_temp),
+             _detect("disk_temp", _find_disk_temp),
+             _detect("wifi_temp", _find_wifi_temp))
+    out = []
+    for p in paths:
+        v = read_first(p, int) if p else None
+        out.append(v / 1000 if v is not None else None)
+    return tuple(out)
 
 
 def temp_gradient(t, warn, crit):
@@ -943,11 +1085,17 @@ def rapl_source():
     board, which is what we want; "package-0" is only the CPU package and is
     the fallback. Both are root-only by default since CVE-2020-8694, so this
     returns None until read access is granted and the code falls back to the
-    battery."""
+    battery.
+
+    Any powercap provider is accepted, not just intel-rapl, so an AMD box that
+    exposes the same domains through a differently-named zone works too; only
+    top-level zones are considered, never the dram/core sub-zones."""
     global _RAPL
     if _RAPL is None:
         best = None
-        for d in sorted(glob.glob("/sys/class/powercap/intel-rapl:[0-9]")):
+        for d in sorted(glob.glob("/sys/class/powercap/*:[0-9]")):
+            if os.path.basename(d).count(":") != 1:
+                continue                 # skip sub-zones (intel-rapl:0:1 = dram)
             try:
                 with open(f"{d}/energy_uj") as f:
                     f.read()
@@ -981,22 +1129,40 @@ def rapl_watts(prev_uj, elapsed):
 
 
 def battery():
+    """(capacity%, status, watts, eta_s, volts). Handles both power_supply
+    models: the charge model (current_now µA, charge_now/charge_full µAh) and
+    the energy model (power_now µW, energy_now/energy_full µWh) that a large
+    share of laptops expose *instead* — reading only the charge model there gave
+    0 W and no ETA on a battery that was plainly discharging. current_now can
+    also be signed (negative while discharging), so magnitudes are used."""
     bat = battery_path()
     if not bat:
         return 0, "no battery", 0.0, None, 0.0
     cap = read_first(f"{bat}/capacity", int, 0)
     status = read_first(f"{bat}/status", default="Unknown")
-    cur = read_first(f"{bat}/current_now", int, 0) or 0
     volt = read_first(f"{bat}/voltage_now", int, 0) or 0
-    now = read_first(f"{bat}/charge_now", int, 0) or 0
-    full = read_first(f"{bat}/charge_full", int, 0) or 0
-    watts = (cur / 1e6) * (volt / 1e6)
+    power_uw = read_first(f"{bat}/power_now", int)      # energy model, if present
+    cur = read_first(f"{bat}/current_now", int)         # charge model, maybe signed
+    if power_uw is not None:
+        watts = abs(power_uw) / 1e6
+    elif cur is not None and volt:
+        watts = abs(cur) / 1e6 * (volt / 1e6)
+    else:
+        watts = 0.0
+    # remaining / full and the rate that empties or fills it, in matching units
+    now = read_first(f"{bat}/charge_now", int)
+    full = read_first(f"{bat}/charge_full", int)
+    rate = abs(cur) if cur is not None else None
+    if now is None:                                     # energy model
+        now = read_first(f"{bat}/energy_now", int)
+        full = read_first(f"{bat}/energy_full", int)
+        rate = abs(power_uw) if power_uw is not None else None
     eta = None
-    if cur > 0:
+    if rate and now is not None and full is not None:
         if status == "Discharging":
-            eta = now / cur * 3600
+            eta = now / rate * 3600
         elif status == "Charging" and full > now:
-            eta = (full - now) / cur * 3600
+            eta = (full - now) / rate * 3600
     return cap, status, watts, eta, volt / 1e6
 
 
@@ -1174,13 +1340,41 @@ def render(write_png=True):
         else:
             core_loads.append(0.0)
 
-    gpu_snap = gpu_engine_snapshot()
-    gpu_prev = prev.get("gpu", {})
-    gpu_pct = 0.0
-    for k, v in gpu_snap.items():
-        if k in gpu_prev:
-            gpu_pct = max(gpu_pct, 100.0 * (v - gpu_prev[k]) / (elapsed * 1e9))
-    gpu_pct = max(0.0, min(100.0, gpu_pct))
+    gsrc = gpu_source()
+    gpu_snap = {}
+    gpu_pct = None                       # None -> no readable GPU, gauge hidden
+    if gsrc and gsrc[0] == "busy":
+        v = read_first(gsrc[1], int)
+        gpu_pct = float(v) if v is not None else None
+    elif gsrc and gsrc[0] == "nvsmi":
+        raw = cached_cmd("gpu", ["nvidia-smi", "--query-gpu=utilization.gpu",
+                                 "--format=csv,noheader,nounits"], 2)
+        try:
+            gpu_pct = float(raw.strip().splitlines()[0])
+        except (ValueError, IndexError):
+            gpu_pct = None
+    elif gsrc:                            # fdinfo
+        gpu_snap = gpu_engine_snapshot()
+        gpu_prev = prev.get("gpu", {})
+        g = 0.0
+        ns_keys = [k for k in gpu_snap if k.startswith("drm-engine-")]
+        if ns_keys:                       # busy-nanoseconds model (i915, amdgpu)
+            for k in ns_keys:
+                if k in gpu_prev:
+                    g = max(g, 100.0 * (gpu_snap[k] - gpu_prev[k]) / (elapsed * 1e9))
+        else:                             # busy/elapsed-cycles model (xe)
+            for k in gpu_snap:
+                if not k.startswith("cyc:"):
+                    continue
+                tk = "tot:" + k[4:]
+                if k in gpu_prev and tk in gpu_prev and tk in gpu_snap:
+                    dtot = gpu_snap[tk] - gpu_prev[tk]
+                    if dtot > 0:
+                        g = max(g, 100.0 * (gpu_snap[k] - gpu_prev[k]) / dtot)
+        gpu_pct = g
+    if gpu_pct is not None:
+        gpu_pct = max(0.0, min(100.0, gpu_pct))
+    have_gpu = gpu_pct is not None
 
     iface = net_iface()
     rx, tx = net_bytes(iface) if iface else (0, 0)
@@ -1249,7 +1443,7 @@ def render(write_png=True):
     # noise no chart can draw, and at an hour of samples it is the difference
     # between a 344KB file and a 208KB one, rewritten every 30 seconds.
     HISTORY.append({"t": round(now, 1), "cpu": round(cpu_pct, 2),
-                    "gpu": round(gpu_pct, 2), "down": round(down),
+                    "gpu": round(gpu_pct if have_gpu else 0.0, 2), "down": round(down),
                     "up": round(up), "power": round(watts, 2),
                     "chg_w": round(charge_w, 2),
                     "chg": CHG_IN if bstatus == "Charging" else
@@ -1395,20 +1589,22 @@ def render(write_png=True):
     y += gap(40)
 
     # ============ GAUGES (hero row) ==============================
-    # Three donuts carry the "how loaded is this machine" answer on their own,
-    # so the sections below can stay quiet and detailed.
+    # Donuts carry the "how loaded is this machine" answer on their own, so the
+    # sections below can stay quiet and detailed. GPU joins CPU and RAM only
+    # when its utilisation is actually readable; otherwise it is dropped and the
+    # remaining two share the width.
     gr, gth = 46, 9
-    gauges = (
-        ("cpu", cpu_pct, f"{cpu_pct:.0f}", "%", ACCENT),
-        ("gpu", gpu_pct, f"{gpu_pct:.0f}", "%", VIOLET),
-        ("ram", mem_used / mem_total * 100, f"{mem_used / mem_total * 100:.0f}", "%", TEAL),
-    )
-    slot = CW / 3
-    for i, (name, pct, big, unit, hue) in enumerate(gauges):
+    gauges = [("cpu", cpu_pct, ACCENT)]
+    if have_gpu:
+        gauges.append(("gpu", gpu_pct, VIOLET))
+    gauges.append(("ram", mem_used / mem_total * 100, TEAL))
+    slot = CW / len(gauges)
+    for i, (name, pct, hue) in enumerate(gauges):
         cx = PAD + slot * (i + 0.5)
         cy = y + gr + 4
         col = state_color(pct, hue)
         gauge(img, cx, cy, gr, gth, pct / 100, col)
+        big, unit = f"{pct:.0f}", "%"
         # number and unit set as one centred group, so "%" hangs off the value
         # instead of floating in the gap at the bottom of the ring
         f_g, f_u = F(MONO_LIGHT, T_HERO), F(MONO_REG, T_BODY)
@@ -1424,9 +1620,11 @@ def render(write_png=True):
     # ============ PER-CORE =======================================
     label(d, PAD, y, "cores", ACCENT)
     rx_ = R
-    clock = f"{cpu_freq_ghz():.2f} GHz"
-    text(d, rx_, y - 1, clock, F(MONO_REG, T_BODY), TEXT, anchor="r")
-    rx_ -= measure(F(MONO_REG, T_BODY), clock) / SS + 12
+    ghz = cpu_freq_ghz()
+    if ghz > 0:                          # some VMs and ARM parts expose no clock
+        clock = f"{ghz:.2f} GHz"
+        text(d, rx_, y - 1, clock, F(MONO_REG, T_BODY), TEXT, anchor="r")
+        rx_ -= measure(F(MONO_REG, T_BODY), clock) / SS + 12
     label_r(d, rx_, y, f"{len(core_loads)} threads", TEXT)
     y += 15
     core_strip(img, PAD, y, CW, 24, core_loads)
@@ -1437,16 +1635,20 @@ def render(write_png=True):
     label_r(d, R, y, "60 min", TEXT)
     y += 15
     histogram(img, PAD, y, CW, 64, "cpu", ACCENT, floor=10, clamp=100,
-              overlay="gpu", overlay_color=VIOLET)
+              overlay="gpu" if have_gpu else None, overlay_color=VIOLET)
     y += 64 + 7
-    lx = PAD
-    for col, txt in ((ACCENT, "cpu"), (VIOLET, "gpu")):
-        swatch(d, lx, y, col)
-        # label in the series colour too, so the pairing survives even where
-        # the swatch is small
-        text(d, lx + 12, y, txt, F(UI_MED, T_LABEL), col)
-        lx += 12 + measure(F(UI_MED, T_LABEL), txt) / SS + 18
-    y += 24
+    # the two-series legend only earns its space when the GPU line is drawn
+    if have_gpu:
+        lx = PAD
+        for col, txt in ((ACCENT, "cpu"), (VIOLET, "gpu")):
+            swatch(d, lx, y, col)
+            # label in the series colour too, so the pairing survives even where
+            # the swatch is small
+            text(d, lx + 12, y, txt, F(UI_MED, T_LABEL), col)
+            lx += 12 + measure(F(UI_MED, T_LABEL), txt) / SS + 18
+        y += 24
+    else:
+        y += 6
 
     # ============ THERMALS =======================================
     # The three device sensors this machine actually labels — CPU package, the
@@ -1465,6 +1667,8 @@ def render(write_png=True):
         lw = measure(f_tl, lab.upper(), 1.4) / SS
         vw = measure(f_tv, val) / SS
         groups.append((lab.upper(), lw, val, vw, temp_gradient(tv, warn, crit)))
+    # nothing to show on a machine that exposes no temperatures at all: drop the
+    # whole row, its title and its gap, rather than leaving a labelled blank
     if groups:
         label(d, PAD, y, "thermals", RED)
         gap_lv, gap_gg = 6, 20
@@ -1474,7 +1678,7 @@ def render(write_png=True):
             text(d, gx, y + 1, labu, f_tl, TEXT, tracking=1.4)
             text(d, gx + lw + gap_lv, y - 1, val, f_tv, col)
             gx += lw + gap_lv + vw + gap_gg
-    y += gap(33)
+        y += gap(33)
 
     # ============ MEMORY =========================================
     mfrac = mem_used / mem_total
@@ -1517,85 +1721,91 @@ def render(write_png=True):
     y += gap(30)
 
     # ============ POWER ==========================================
+    # have_battery: a laptop pack is present. have_power: something can report
+    # consumption — RAPL, or the battery's own current. A desktop has no
+    # battery, so its power row shows just the draw and drops the AC/charge
+    # split and the direction legend, and there is no battery row at all.
     charging = bstatus == "Charging"
-    label(d, PAD, y, "power", AMBER)
+    have_battery = bstatus != "no battery"
+    have_power = power_src != "battery" or have_battery
+    if have_power:
+        label(d, PAD, y, "power", AMBER)
+        # While charging the wall feeds two things, so show them as two figures
+        # rather than one sum: what the machine draws, and what the wall delivers
+        # in total, the difference being whatever goes into the pack.
+        ux = R
+        if ac_w > 0.05 and have_battery:
+            atxt = f"{ac_w:.1f} W"
+            # the total, so neutral: sum of the amber consumption and the green
+            # charge, and painting it amber made the two figures blur together
+            text(d, ux, y - 2, atxt, f_val, TEXT, anchor="r")
+            ux -= measure(f_val, atxt) / SS + 6
+            label_r(d, ux, y, "ac", TEXT, size=T_MICRO)
+            ux -= measure(F(UI_SEMI, T_MICRO), "AC", 1.6) / SS + 14
+        dtxt = f"{watts:.1f} W"
+        text(d, ux, y - 2, dtxt, f_val, consumption_color(1.0 if bstatus != "Discharging" else 0.0)
+             if watts > 0.05 else MUTE, anchor="r")
+        ux -= measure(f_val, dtxt) / SS + 6
+        label_r(d, ux, y, "device", TEXT, size=T_MICRO)
+        ux -= measure(F(UI_SEMI, T_MICRO), "DEVICE", 1.6) / SS + 14
+        # the battery fallback reads 0W on mains, which is a measurement gap
+        # rather than an idle machine, and that is worth saying on the panel
+        if power_src == "battery":
+            label_r(d, ux, y, "battery", TEXT, size=T_MICRO)
+        y += 16
+        power_chart(img, PAD, y, CW, 30, floor=8)
+        y += 30
+        # the direction legend only means anything with a battery to flow to/from
+        if have_battery:
+            y += 7
+            lx = PAD
+            for col, txt, is_line in ((AMBER, "on ac", False), (DARKRED, "on battery", False),
+                                      (GREEN, "charging", False), (TEXT, "total", True)):
+                swatch(d, lx, y, col, line=is_line)
+                text(d, lx + (15 if is_line else 12), y, txt, F(UI_MED, T_LABEL), col)
+                lx += (15 if is_line else 12) + measure(F(UI_MED, T_LABEL), txt) / SS + 16
+            y += 12
+        y += gap(20)
 
-    # While charging the wall feeds two things, so show them as two figures
-    # rather than one sum: what the machine draws, and what the wall delivers
-    # in total, the difference being whatever goes into the pack.
-    ux = R
-    if ac_w > 0.05:
-        atxt = f"{ac_w:.1f} W"
-        # the total, so neutral: it is the sum of the amber consumption and the
-        # green charge, and painting it amber made the two figures blur together
-        text(d, ux, y - 2, atxt, f_val, TEXT, anchor="r")
-        ux -= measure(f_val, atxt) / SS + 6
-        label_r(d, ux, y, "ac", TEXT, size=T_MICRO)
-        ux -= measure(F(UI_SEMI, T_MICRO), "AC", 1.6) / SS + 14
-    dtxt = f"{watts:.1f} W"
-    text(d, ux, y - 2, dtxt, f_val, consumption_color(1.0 if bstatus != "Discharging" else 0.0)
-         if watts > 0.05 else MUTE, anchor="r")
-    ux -= measure(f_val, dtxt) / SS + 6
-    label_r(d, ux, y, "device", TEXT, size=T_MICRO)
-    ux -= measure(F(UI_SEMI, T_MICRO), "DEVICE", 1.6) / SS + 14
-    # the battery fallback reads 0W on mains, which is a measurement gap rather
-    # than an idle machine, and that is worth saying on the panel
-    if power_src == "battery":
-        label_r(d, ux, y, "battery", TEXT, size=T_MICRO)
-    y += 16
-    power_chart(img, PAD, y, CW, 30, floor=8)
-    y += 30
-
-    y += 7
-    lx = PAD
-    for col, txt, is_line in ((AMBER, "on ac", False), (DARKRED, "on battery", False),
-                              (GREEN, "charging", False), (TEXT, "total", True)):
-        swatch(d, lx, y, col, line=is_line)
-        text(d, lx + (15 if is_line else 12), y, txt, F(UI_MED, T_LABEL), col)
-        lx += (15 if is_line else 12) + measure(F(UI_MED, T_LABEL), txt) / SS + 16
-    y += 12
-    y += gap(20)
-
-    # Charging outranks the level: a battery at 20% that is plugged in is not a
-    # problem, so it gets the "gaining" colour rather than a red warning. On
-    # battery the fill tracks what is left, green through amber to red.
-    # Two different things, so two colours. bcol is about the LEVEL and drives
-    # the bar and the percentage; scol is about the DIRECTION and drives the
-    # status word and the wattage. Sharing one made "discharging" render green
-    # whenever the pack happened to be near full.
-    full = bstatus == "Full" or cap >= 100
-    if charging or full:
-        bcol = GREEN          # gaining, or topped up — a good state, so green
-    elif bstatus == "Discharging":
-        bcol = ramp_rgb(1 - cap / 100)
-    else:
-        bcol = STEEL          # on AC, holding below full (e.g. a charge limit)
-    scol = GREEN if (charging or full) else (DARKRED if bstatus == "Discharging" else TEXT)
-    label(d, PAD, y, "battery", AMBER)
-    if batt_v > 0.05:
-        # this pack has no temperature sensor, so the spot where the other
-        # sections carry their temperature carries the terminal voltage instead
-        text(d, PAD + measure(F(UI_SEMI, T_LABEL), "BATTERY", 1.6) / SS + 11, y - 1,
-             f"{batt_v:.1f} V", F(MONO_REG, T_BODY), TEXT)
-    bx = R
-    if eta:
-        text(d, bx, y - 1, fmt_dur(eta), F(MONO_REG, T_BODY), TEXT, anchor="r")
-        bx -= measure(F(MONO_REG, T_BODY), fmt_dur(eta)) / SS + 12
-    # power crossing the pack's own terminals, which belongs here rather than
-    # in the POWER row: that one is about the machine and the wall.
-    if batt_w > 0.05 and bstatus in ("Charging", "Discharging"):
-        wtxt = f"{batt_w:.1f} W"
-        text(d, bx, y - 1, wtxt, F(MONO_REG, T_BODY),
-             scol, anchor="r")
-        bx -= measure(F(MONO_REG, T_BODY), wtxt) / SS + 12
-    text(d, bx, y - 1, bstatus.lower(), F(UI_MED, T_BODY), scol, anchor="r")
-    bx -= measure(F(UI_MED, T_BODY), bstatus.lower()) / SS + 12
-    text(d, bx, y - 2, f"{cap}%", f_val, bcol, anchor="r")
-    y += 16
-    bar(img, PAD, y, CW, 6, cap / 100, bcol)
-    y += 18
-
-    y += gap(10)
+    # ============ BATTERY ========================================
+    if have_battery:
+        # Charging outranks the level: a battery at 20% that is plugged in is not
+        # a problem, so it gets the "gaining" colour rather than a red warning.
+        # On battery the fill tracks what is left, green through amber to red.
+        # Two colours: bcol is about the LEVEL and drives the bar and the
+        # percentage; scol is about the DIRECTION and drives the status word and
+        # the wattage. Sharing one made "discharging" render green near full.
+        full = bstatus == "Full" or cap >= 100
+        if charging or full:
+            bcol = GREEN          # gaining, or topped up — a good state, so green
+        elif bstatus == "Discharging":
+            bcol = ramp_rgb(1 - cap / 100)
+        else:
+            bcol = STEEL          # on AC, holding below full (e.g. a charge limit)
+        scol = GREEN if (charging or full) else (DARKRED if bstatus == "Discharging" else TEXT)
+        label(d, PAD, y, "battery", AMBER)
+        if batt_v > 0.05:
+            # this pack has no temperature sensor, so the spot where the other
+            # sections carry their temperature carries the terminal voltage
+            text(d, PAD + measure(F(UI_SEMI, T_LABEL), "BATTERY", 1.6) / SS + 11, y - 1,
+                 f"{batt_v:.1f} V", F(MONO_REG, T_BODY), TEXT)
+        bx = R
+        if eta:
+            text(d, bx, y - 1, fmt_dur(eta), F(MONO_REG, T_BODY), TEXT, anchor="r")
+            bx -= measure(F(MONO_REG, T_BODY), fmt_dur(eta)) / SS + 12
+        # power crossing the pack's own terminals, which belongs here rather than
+        # in the POWER row: that one is about the machine and the wall.
+        if batt_w > 0.05 and bstatus in ("Charging", "Discharging"):
+            wtxt = f"{batt_w:.1f} W"
+            text(d, bx, y - 1, wtxt, F(MONO_REG, T_BODY), scol, anchor="r")
+            bx -= measure(F(MONO_REG, T_BODY), wtxt) / SS + 12
+        text(d, bx, y - 1, bstatus.lower(), F(UI_MED, T_BODY), scol, anchor="r")
+        bx -= measure(F(UI_MED, T_BODY), bstatus.lower()) / SS + 12
+        text(d, bx, y - 2, f"{cap}%", f_val, bcol, anchor="r")
+        y += 16
+        bar(img, PAD, y, CW, 6, cap / 100, bcol)
+        y += 18
+        y += gap(10)
 
     # ============ TOP PROCESSES ==================================
     # A usage bar behind each row turns two flat lists into something you can

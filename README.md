@@ -78,6 +78,13 @@ across the gaps between sections rather than leaving a hole at the bottom.
 | `99-rapl-psys.rules` | optional udev rule for the system-power reading |
 | `shot.py` | renders one frame to `docs/` for the screenshots here |
 
+It adapts to the hardware it finds. CPU temperature comes from Intel
+`coretemp`, AMD `k10temp` or a thermal zone; GPU load from Intel/AMD DRM
+counters or NVIDIA's `nvidia-smi`; system power from whichever RAPL domain is
+readable. What a given machine can't report simply drops out — a desktop's
+missing battery, a GPU with no readable utilisation, temperatures a board
+doesn't expose — rather than showing dead zeros.
+
 Written for Linux Mint (Cinnamon). It should work on other X11 desktops but
 has not been tested there.
 
