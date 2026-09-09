@@ -2092,6 +2092,37 @@ def run_window(interval=2.0):
         win.move(x, yy)
 
     panels = []
+    base = {"img": None}                 # the latest native-size rendered frame
+    GRIP = 30                            # size of the resize handle, in px
+
+    def scaled_for(cfg):
+        """The panel image scaled by cfg['scale'], then clamped so it never
+        exceeds the monitor's usable height (auto-fit is the safety net)."""
+        img = base["img"]
+        if img is None:
+            return None
+        disp = Gdk.Display.get_default()
+        scale = float(cfg.get("scale", 1.0) or 1.0)
+        w, h = max(80, round(img.width * scale)), max(80, round(img.height * scale))
+        mon = (disp.get_monitor(cfg.get("monitor", 0))
+               or disp.get_primary_monitor() or disp.get_monitor(0))
+        usable = mon.get_workarea().height - 2 * load_settings().get("margin", MARGIN)
+        if h > usable > 0:
+            k = usable / h
+            w, h = max(80, round(w * k)), max(80, round(h * k))
+        if (w, h) == (img.width, img.height):
+            return img
+        return img.resize((w, h), Image.LANCZOS)
+
+    def paint(pw, cfg):
+        """Rebuild a panel's surface from the current frame at its scale."""
+        dimg = scaled_for(cfg)
+        if dimg is None:
+            return None
+        st = pw["state"]
+        st["surface"], st["buf"] = surface_from(dimg)
+        st["w"], st["h"] = dimg.width, dimg.height
+        return dimg
 
     def setup(pw):
         win, st = pw["win"], pw["state"]
@@ -2103,7 +2134,29 @@ def run_window(interval=2.0):
                 cr.paint()
             if st.get("moving"):
                 draw_banner(cr, win)
+                w, h = win.get_allocated_width(), win.get_allocated_height()
+                cx, cy = w - GRIP / 2 - 4, h - GRIP / 2 - 4
+                cr.set_operator(cairo.OPERATOR_OVER)
+                cr.set_source_rgba(0, 0, 0, 0.30)
+                cr.arc(cx, cy + 1.5, GRIP / 2, 0, 2 * math.pi)
+                cr.fill()
+                cr.set_source_rgba(0.23, 0.51, 0.96, 0.97)
+                cr.arc(cx, cy, GRIP / 2, 0, 2 * math.pi)
+                cr.fill()
+                cr.set_source_rgba(1, 1, 1, 0.95)
+                cr.set_line_width(1.6)
+                cr.set_line_cap(cairo.LINE_CAP_ROUND)
+                for d in (1.5, 5.5):
+                    cr.move_to(cx - 5 + d, cy + 5)
+                    cr.line_to(cx + 5, cy - 5 + d)
+                cr.stroke()
             return False
+
+        def _cfg_of():
+            cfgs = load_settings().get("panels") or []
+            if pw["idx"] < len(cfgs):
+                return dict(cfgs[pw["idx"]])
+            return {"monitor": 0, "position": "top-right", "offset": None, "scale": 1.0}
 
         def on_realize(_w):
             win.get_window().input_shape_combine_region(cairo.Region(), 0, 0)
@@ -2137,11 +2190,30 @@ def run_window(interval=2.0):
                 return False
             drag["active"] = True
             drag["sx"], drag["sy"] = ev.x_root, ev.y_root
-            drag["wx"], drag["wy"] = win.get_position()
+            w, h = win.get_allocated_width(), win.get_allocated_height()
+            if ev.x >= w - GRIP - 8 and ev.y >= h - GRIP - 8:
+                drag["mode"] = "resize"
+                drag["sscale"] = float(_cfg_of().get("scale", 1.0) or 1.0)
+                st["rscale"] = drag["sscale"]
+            else:
+                drag["mode"] = "move"
+                drag["wx"], drag["wy"] = win.get_position()
             return True
 
         def on_motion(_w, ev):
-            if st.get("moving") and drag["active"]:
+            if not (st.get("moving") and drag["active"]):
+                return False
+            if drag.get("mode") == "resize":
+                sc = max(0.5, min(2.0, drag["sscale"] + (ev.x_root - drag["sx"]) / W))
+                st["rscale"] = sc
+                st["resizing"] = True
+                cfg = _cfg_of()
+                cfg["scale"] = sc
+                dimg = paint(pw, cfg)
+                if dimg is not None:
+                    win.set_size_request(dimg.width, dimg.height)
+                win.queue_draw()
+            else:
                 win.move(int(drag["wx"] + (ev.x_root - drag["sx"])),
                          int(drag["wy"] + (ev.y_root - drag["sy"])))
             return False
@@ -2150,18 +2222,23 @@ def run_window(interval=2.0):
             if not st.get("moving"):
                 return False
             drag["active"] = False
-            wx, wy = win.get_position()
-            ww = win.get_allocated_width() or W
-            disp = Gdk.Display.get_default()
-            mon = (disp.get_monitor_at_point(wx + ww // 2, wy + (st["h"] or 0) // 2)
-                   or disp.get_primary_monitor())
-            wa = mon.get_workarea()
             s = dict(load_settings())
             cfgs = [dict(c) for c in (s.get("panels") or [])]
             while len(cfgs) <= pw["idx"]:
                 cfgs.append({"monitor": 0, "position": "top-right", "offset": None})
-            cfgs[pw["idx"]] = {"monitor": mon_index(disp, mon), "position": "free",
-                               "offset": [wx - wa.x, wy - wa.y]}
+            if drag.get("mode") == "resize":
+                cfgs[pw["idx"]]["scale"] = round(st.get("rscale", 1.0), 3)
+                st["resizing"] = False
+            else:
+                wx, wy = win.get_position()
+                ww = win.get_allocated_width() or W
+                disp = Gdk.Display.get_default()
+                mon = (disp.get_monitor_at_point(wx + ww // 2, wy + (st["h"] or 0) // 2)
+                       or disp.get_primary_monitor())
+                wa = mon.get_workarea()
+                cfgs[pw["idx"]] = {"monitor": mon_index(disp, mon), "position": "free",
+                                   "offset": [wx - wa.x, wy - wa.y],
+                                   "scale": cfgs[pw["idx"]].get("scale", 1.0)}
             s["panels"] = cfgs
             s["move"] = None
             save_settings(s)
@@ -2198,21 +2275,9 @@ def run_window(interval=2.0):
 
     def tick():
         try:
-            img = render(write_png=False)
+            base["img"] = render(write_png=False)   # native frame; scaled per panel
             s = load_settings()
             cfgs = s.get("panels") or [{"monitor": 0, "position": "top-right", "offset": None}]
-            # auto-fit: if the content is taller than the first panel's monitor
-            # can show, scale the whole panel down so nothing is clipped off the
-            # bottom, however much the user has switched on.
-            disp = Gdk.Display.get_default()
-            mon0 = (disp.get_monitor(cfgs[0].get("monitor", 0))
-                    or disp.get_primary_monitor() or disp.get_monitor(0))
-            usable = mon0.get_workarea().height - 2 * s.get("margin", MARGIN)
-            if img.height > usable > 0:
-                k = usable / img.height
-                img = img.resize((max(1, round(img.width * k)), max(1, round(img.height * k))),
-                                 Image.LANCZOS)
-            surf, buf = surface_from(img)
             sync_count(max(1, len(cfgs)))
             move_idx = s.get("move")
             if move_idx is True:
@@ -2220,18 +2285,19 @@ def run_window(interval=2.0):
             for i, pw in enumerate(panels):
                 st = pw["state"]
                 pw["idx"] = i
-                st["surface"], st["buf"], st["h"] = surf, buf, img.height
                 cfg = cfgs[i] if i < len(cfgs) else {}
                 if move_idx == i and not st.get("moving"):
                     st["enter_move"]()
                 elif move_idx != i and st.get("moving"):
                     st["exit_move"]()
+                if not st.get("resizing"):       # don't fight a live resize drag
+                    paint(pw, cfg)
                 if not st.get("moving"):
-                    key = (img.width, img.height, cfg.get("monitor"), cfg.get("position"),
-                           s.get("margin"), tuple(cfg.get("offset") or ()))
+                    key = (st.get("w"), st.get("h"), cfg.get("monitor"), cfg.get("position"),
+                           cfg.get("scale"), s.get("margin"), tuple(cfg.get("offset") or ()))
                     if key != st.get("placekey"):
                         st["placekey"] = key
-                        place(pw, cfg, img.width, img.height)
+                        place(pw, cfg, st["w"], st["h"])
                     keep_above_desktop(pw["win"])
                 pw["win"].queue_draw()
             tick.fails = 0
