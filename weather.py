@@ -6,6 +6,7 @@ import sys
 import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+SETTINGS = os.path.join(HERE, "settings.json")
 CONF = os.path.join(HERE, "weather.json")
 
 WMO = {
@@ -23,9 +24,19 @@ WMO = {
 
 
 def load_conf():
+    c = None
     try:
-        with open(CONF) as f:
-            c = json.load(f)
+        with open(SETTINGS) as f:
+            c = json.load(f).get("location")
+    except Exception:
+        c = None
+    if not c:
+        try:
+            with open(CONF) as f:
+                c = json.load(f)
+        except Exception:
+            return None
+    try:
         return float(c["lat"]), float(c["lon"]), str(c.get("name", ""))
     except Exception:
         return None

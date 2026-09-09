@@ -32,6 +32,17 @@ PNG_PATH = os.path.join(CACHE_DIR, "hud.png")
 LOG_FILE = os.path.join(CACHE_DIR, "hud.log")
 LOCK_FILE = os.path.join(CACHE_DIR, "hud.lock")
 
+SETTINGS_FILE = os.path.join(CONF_DIR, "settings.json")
+WEATHER_FILE = os.path.join(CONF_DIR, "weather.json")
+
+DEFAULT_SETTINGS = {
+    "monitor": 0,
+    "position": "top-right",
+    "margin": 22,
+    "location": None,
+    "sections": {"thermals": True, "network": True, "power": True, "processes": True},
+}
+
 PSUPPLY = "/sys/class/power_supply"
 DETECT_TTL = 30
 HIST_MAX_AGE = 3600
@@ -1189,6 +1200,43 @@ def save_json(path, data):
     os.replace(tmp, path)
 
 
+_SETTINGS = None
+_SETTINGS_MTIME = -1.0
+
+
+def load_settings():
+    """Current settings merged onto the defaults, re-read whenever the file
+    changes so the settings window's edits apply without a restart. A pre-
+    settings weather.json is folded in once as the location."""
+    global _SETTINGS, _SETTINGS_MTIME
+    try:
+        m = os.path.getmtime(SETTINGS_FILE)
+    except OSError:
+        m = 0.0
+    if _SETTINGS is None or m != _SETTINGS_MTIME:
+        data = load_json(SETTINGS_FILE, {})
+        if not isinstance(data, dict):
+            data = {}
+        if "location" not in data:
+            legacy = load_json(WEATHER_FILE, None)
+            if isinstance(legacy, dict) and "lat" in legacy:
+                data["location"] = legacy
+        s = dict(DEFAULT_SETTINGS)
+        s.update({k: v for k, v in data.items() if k != "sections"})
+        sec = dict(DEFAULT_SETTINGS["sections"])
+        if isinstance(data.get("sections"), dict):
+            sec.update(data["sections"])
+        s["sections"] = sec
+        _SETTINGS, _SETTINGS_MTIME = s, m
+    return _SETTINGS
+
+
+def save_settings(s):
+    save_json(SETTINGS_FILE, s)
+    global _SETTINGS_MTIME
+    _SETTINGS_MTIME = -1.0          # force a reload on the next read
+
+
 HISTORY = []
 _STATE = None
 _PERSISTED = 0.0
@@ -1236,6 +1284,7 @@ def panel_bg(H):
 
 def render(write_png=True):
     global HISTORY, FLEX, FLEX_POINTS, _STATE, _PERSISTED
+    SECTIONS = load_settings()["sections"]
     now = time.time()
     prev = _STATE if _STATE is not None else load_json(STATE_FILE, {})
     elapsed = max(0.001, now - prev.get("t", now - 2))
@@ -1527,7 +1576,7 @@ def render(write_png=True):
         lw = measure(f_tl, lab.upper(), 1.4) / SS
         vw = measure(f_tv, val) / SS
         groups.append((lab.upper(), lw, val, vw, temp_gradient(tv, warn, crit)))
-    if groups:
+    if groups and SECTIONS.get("thermals", True):
         label(d, PAD, y, "thermals", RED)
         gap_lv, gap_gg = 6, 20
         total = sum(lw + gap_lv + vw for _, lw, _, vw, _ in groups) + gap_gg * (len(groups) - 1)
@@ -1566,19 +1615,20 @@ def render(write_png=True):
     text(d, R - measure(f_val_sm, fmt_bytes(wr, True)) / SS - 9, y, "write", F(UI_MED, T_BODY), TEXT, anchor="r")
     y += gap(30)
 
-    label(d, PAD, y, "network", ACCENT)
-    y += 16
-    peak = net_chart(img, PAD, y, CW, 60, ACCENT, CORAL, floor=64 * 1024)
-    y += 60 + 6
-    text(d, PAD, y, f"↓ {fmt_bytes(down, True)}", f_val_sm, ACCENT)
-    text(d, W / 2, y, f"peak {fmt_bytes(peak, True)}", F(MONO_REG, T_LABEL), TEXT, anchor="c")
-    text(d, R, y, f"↑ {fmt_bytes(up, True)}", f_val_sm, CORAL, anchor="r")
-    y += gap(30)
+    if SECTIONS.get("network", True):
+        label(d, PAD, y, "network", ACCENT)
+        y += 16
+        peak = net_chart(img, PAD, y, CW, 60, ACCENT, CORAL, floor=64 * 1024)
+        y += 60 + 6
+        text(d, PAD, y, f"↓ {fmt_bytes(down, True)}", f_val_sm, ACCENT)
+        text(d, W / 2, y, f"peak {fmt_bytes(peak, True)}", F(MONO_REG, T_LABEL), TEXT, anchor="c")
+        text(d, R, y, f"↑ {fmt_bytes(up, True)}", f_val_sm, CORAL, anchor="r")
+        y += gap(30)
 
     charging = bstatus == "Charging"
     have_battery = bstatus != "no battery"
     have_power = power_src != "battery" or have_battery
-    if have_power:
+    if have_power and SECTIONS.get("power", True):
         label(d, PAD, y, "power", AMBER)
         ux = R
         if ac_w > 0.05 and have_battery:
@@ -1667,21 +1717,20 @@ def render(write_png=True):
             y += 22
         return y
 
-    y = proc_list(y, "top cpu", ACCENT, top_cpu,
-                  value_of=lambda r: r[1],
-                  fmt_of=lambda r: f"{r[1]:.1f}%",
-                  colour_of=lambda r: ACCENT if r[1] > 1 else MUTE,
-                  right="% of one core", total=100.0 * max(1, len(core_loads)),
-                  curve=0.5)
-    y += gap(14)
-
-    y = proc_list(y, "top memory", TEAL, top_mem,
-                  value_of=lambda r: r[2],
-                  fmt_of=lambda r: fmt_bytes(r[2]),
-                  colour_of=lambda r: TEAL,
-                  right="share of ram", total=mem_total, curve=0.5)
-
-    y += 22
+    if SECTIONS.get("processes", True):
+        y = proc_list(y, "top cpu", ACCENT, top_cpu,
+                      value_of=lambda r: r[1],
+                      fmt_of=lambda r: f"{r[1]:.1f}%",
+                      colour_of=lambda r: ACCENT if r[1] > 1 else MUTE,
+                      right="% of one core", total=100.0 * max(1, len(core_loads)),
+                      curve=0.5)
+        y += gap(14)
+        y = proc_list(y, "top memory", TEAL, top_mem,
+                      value_of=lambda r: r[2],
+                      fmt_of=lambda r: fmt_bytes(r[2]),
+                      colour_of=lambda r: TEAL,
+                      right="share of ram", total=mem_total, curve=0.5)
+        y += 22
     H = int(round(y))
 
     natural = y - FLEX_POINTS * FLEX
@@ -1775,13 +1824,22 @@ def run_window(interval=2.0):
     state = {"surface": None, "buf": None, "h": 0, "fails": 0}
 
     def place(h):
-        """Right edge and top at MARGIN, measured off the work area so the
-        taskbar is respected."""
-        mon = (Gdk.Display.get_default().get_primary_monitor()
-               or Gdk.Display.get_default().get_monitor(0))
+        """Put the panel in the configured corner of the configured monitor,
+        measured off the work area so the taskbar is respected, and size the
+        flex target to that monitor's height."""
+        global TARGET_H
+        s = load_settings()
+        disp = Gdk.Display.get_default()
+        mon = (disp.get_monitor(s.get("monitor", 0))
+               or disp.get_primary_monitor() or disp.get_monitor(0))
         wa = mon.get_workarea()
+        margin = s.get("margin", MARGIN)
+        pos = s.get("position", "top-right")
+        TARGET_H = max(200, wa.height - 2 * margin)
+        x = wa.x + (wa.width - W - margin if pos.endswith("right") else margin)
+        yy = wa.y + (wa.height - h - margin if pos.startswith("bottom") else margin)
         win.set_size_request(W, h)
-        win.move(wa.x + wa.width - W - MARGIN, wa.y + MARGIN)
+        win.move(x, yy)
 
     def on_draw(_w, cr):
         if state["surface"] is not None:
@@ -1819,7 +1877,10 @@ def run_window(interval=2.0):
         try:
             img = render(write_png=False)
             state["surface"], state["buf"] = surface_from(img)
-            if img.height != state["h"]:
+            s = load_settings()
+            key = (img.height, s.get("monitor"), s.get("position"), s.get("margin"))
+            if key != state.get("placekey"):
+                state["placekey"] = key
                 state["h"] = img.height
                 place(img.height)
             keep_above_desktop()
@@ -1844,8 +1905,118 @@ def run_window(interval=2.0):
     Gtk.main()
 
 
+def run_settings():
+    """A small GTK window that reads and writes settings.json. Nothing here is
+    hand-edited: this is the graphical front for it, and a running panel picks
+    up the saved file within a second."""
+    import gi
+    gi.require_version("Gtk", "3.0")
+    from gi.repository import Gtk, Gdk
+    import urllib.parse
+    import urllib.request
+
+    s = load_settings()
+    win = Gtk.Window(title="Linux Mint HUD — Settings")
+    win.set_border_width(16)
+    grid = Gtk.Grid(row_spacing=10, column_spacing=12)
+    win.add(grid)
+    row = [0]
+
+    def add_row(label_text, widget):
+        if label_text:
+            grid.attach(Gtk.Label(label=label_text, xalign=0), 0, row[0], 1, 1)
+        grid.attach(widget, 1 if label_text else 0, row[0],
+                    1 if label_text else 2, 1)
+        row[0] += 1
+
+    disp = Gdk.Display.get_default()
+    n = disp.get_n_monitors()
+    mon_combo = Gtk.ComboBoxText()
+    for i in range(n):
+        g = disp.get_monitor(i).get_geometry()
+        prim = " (primary)" if disp.get_monitor(i).is_primary() else ""
+        mon_combo.append(str(i), f"{i}:  {g.width}×{g.height}{prim}")
+    mid = s.get("monitor", 0)
+    mon_combo.set_active_id(str(mid if 0 <= mid < n else 0))
+    add_row("Monitor", mon_combo)
+
+    pos_combo = Gtk.ComboBoxText()
+    for key, txt in (("top-left", "Top left"), ("top-right", "Top right"),
+                     ("bottom-left", "Bottom left"), ("bottom-right", "Bottom right")):
+        pos_combo.append(key, txt)
+    pos_combo.set_active_id(s.get("position", "top-right"))
+    add_row("Position", pos_combo)
+
+    margin_spin = Gtk.SpinButton.new_with_range(0, 200, 1)
+    margin_spin.set_value(s.get("margin", 22))
+    add_row("Edge margin (px)", margin_spin)
+
+    loc = s.get("location") or {}
+    loc_state = {"data": loc or None}
+    town = Gtk.Entry()
+    town.set_placeholder_text("town or city")
+    lookup = Gtk.Button(label="Look up")
+    locbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+    locbox.pack_start(town, True, True, 0)
+    locbox.pack_start(lookup, False, False, 0)
+    add_row("Weather", locbox)
+    loc_label = Gtk.Label(label=f"→ {loc['name']}" if loc.get("name") else "→ none (weather off)",
+                          xalign=0)
+    add_row("", loc_label)
+
+    def do_lookup(_b):
+        q = town.get_text().strip()
+        if not q:
+            return
+        try:
+            url = "https://geocoding-api.open-meteo.com/v1/search?count=1&name=" + urllib.parse.quote(q)
+            res = json.load(urllib.request.urlopen(url, timeout=8))["results"][0]
+            loc_state["data"] = {"lat": res["latitude"], "lon": res["longitude"], "name": res["name"]}
+            loc_label.set_text(f"→ {res['name']}, {res.get('admin1', '')} {res['country_code']}")
+        except Exception:
+            loc_label.set_text("→ couldn't find that place")
+    lookup.connect("clicked", do_lookup)
+
+    secbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+    checks = {}
+    for key, txt in (("thermals", "Thermals"), ("network", "Network"),
+                     ("power", "Power"), ("processes", "Top processes")):
+        cb = Gtk.CheckButton(label=txt)
+        cb.set_active(s["sections"].get(key, True))
+        checks[key] = cb
+        secbox.pack_start(cb, False, False, 0)
+    add_row("Sections", secbox)
+
+    status = Gtk.Label(label="", xalign=0)
+    add_row("", status)
+    btns = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+    save = Gtk.Button(label="Save")
+    close = Gtk.Button(label="Close")
+    btns.pack_end(close, False, False, 0)
+    btns.pack_end(save, False, False, 0)
+    add_row("", btns)
+
+    def do_save(_b):
+        new = dict(load_settings())
+        new["monitor"] = int(mon_combo.get_active_id() or 0)
+        new["position"] = pos_combo.get_active_id() or "top-right"
+        new["margin"] = int(margin_spin.get_value())
+        new["location"] = loc_state["data"]
+        new["sections"] = {k: cb.get_active() for k, cb in checks.items()}
+        save_settings(new)
+        status.set_text("Saved — the panel updates within a second.")
+    save.connect("clicked", do_save)
+    close.connect("clicked", lambda *_: win.close())
+
+    win.connect("destroy", Gtk.main_quit)
+    win.show_all()
+    Gtk.main()
+
+
 if __name__ == "__main__":
-    if "--png" in sys.argv:
+    if "--settings" in sys.argv:
+        run_settings()
+    elif "--png" in sys.argv:
         render()
         for _t in threading.enumerate():
             if _t is not threading.main_thread():

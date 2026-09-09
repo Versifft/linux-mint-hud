@@ -9,16 +9,18 @@ branch — nothing here has landed on `main` yet.
 - [ ] A clean uninstaller (autostart entry, files, the udev rule, cache)
 
 ## Configuration
-- [ ] A real config file with an obvious, documented location
-      (e.g. `~/.config/mint-hud/config.toml`)
-- [ ] Move the in-code constants — placement, sizes, section toggles — into it
-- [ ] Make it clear in the README/installer where settings live
-- [ ] Maybe a small settings GUI
+- [x] A machine-managed settings file (`settings.json`), never hand-edited
+- [x] A settings GUI (`hud.py --settings`) that reads and writes it
+- [x] Panel picks up saved settings live (no restart)
+- [x] Fold the old `weather.json` location into it (with migration)
+- [ ] Move the remaining in-code constants (sizes, colours) in too
+- [ ] Document it in the README + a menu launcher (.desktop) for the GUI
 
 ## Multi-monitor
-- [ ] Choose which monitor the panel shows on
-- [ ] Move / position it (corner + offset), instead of only auto top-right
-- [ ] Handle per-monitor work areas and mixed DPI
+- [x] Choose which monitor the panel shows on
+- [x] Position it in any corner (+ configurable edge margin)
+- [ ] Free offset, not just corners
+- [ ] Handle mixed DPI
 
 ## Hardware coverage
 - [ ] Keep collecting reports of missing/wrong readouts on AMD / NVIDIA /

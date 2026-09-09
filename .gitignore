@@ -12,3 +12,6 @@ __pycache__/
 
 # Local weather location (personal); set per-machine.
 weather.json
+
+# Local settings (written by the settings window); machine-specific.
+settings.json
