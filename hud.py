@@ -733,10 +733,56 @@ def battery_path():
     return _detect("battery", find)
 
 
+_UPOWER = {"t": -1e9, "data": []}
+
+
+def _upower_peripherals():
+    """Peripheral batteries UPower knows about — this reaches devices that
+    report only over Bluez/UPower (many Bluetooth headsets) and never appear
+    under /sys/class/power_supply. `power supply: no` filters out the machine's
+    own battery and the AC line. Cached for a few seconds; upower -d is quick
+    but not worth running every frame."""
+    now = time.time()
+    if now - _UPOWER["t"] < 12:
+        return _UPOWER["data"]
+    _UPOWER["t"] = now
+    if not shutil.which("upower"):
+        _UPOWER["data"] = []
+        return []
+    try:
+        out = subprocess.run(["upower", "-d"], capture_output=True, text=True, timeout=4).stdout
+    except Exception:
+        return _UPOWER["data"]
+    devs = []
+    for block in out.split("Device:")[1:]:
+        d, psupply = {}, None
+        for line in block.splitlines():
+            ln = line.strip()
+            if ln.startswith("model:"):
+                d["name"] = ln.split(":", 1)[1].strip()
+            elif ln.startswith("power supply:"):
+                psupply = ln.split(":", 1)[1].strip()
+            elif ln.startswith("percentage:"):
+                try:
+                    d["cap"] = int(round(float(ln.split(":", 1)[1].strip().rstrip("%"))))
+                except ValueError:
+                    pass
+            elif ln.startswith("state:"):
+                d["state"] = ln.split(":", 1)[1].strip()
+        if psupply == "no" and "cap" in d:
+            name = d.get("name") or "device"
+            devs.append({"id": "upower:" + name, "name": name, "capacity": d["cap"],
+                         "status": "Charging" if d.get("state") == "charging" else "Discharging"})
+    _UPOWER["data"] = devs
+    return devs
+
+
 def peripheral_batteries():
-    """Wireless mouse/keyboard/etc. batteries (power_supply type Battery with
-    scope=Device — the ones battery_path skips). Read fresh so a device turning
-    on or off shows up. Returns [{id, name, capacity, status}]."""
+    """Wireless mouse/keyboard/headset/etc. batteries. Two sources merged:
+    /sys/class/power_supply devices with scope=Device (the ones battery_path
+    skips), plus whatever UPower reports that isn't a system battery — the
+    latter catches Bluetooth devices that never show up in sysfs. Returns
+    [{id, name, capacity, status}]."""
     out = []
     try:
         for name in sorted(os.listdir(PSUPPLY)):
@@ -751,6 +797,10 @@ def peripheral_batteries():
                         "status": read_first(f"{d}/status", default="")})
     except OSError:
         pass
+    seen = {p["name"].lower() for p in out if p.get("name")}
+    for u in _upower_peripherals():
+        if u["name"].lower() not in seen:
+            out.append(u)
     return out
 
 
