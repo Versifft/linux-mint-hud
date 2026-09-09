@@ -2405,17 +2405,31 @@ def run_window(interval=2.0):
             pw["closing"] = True
             pw["win"].destroy()
 
-    def tick():
+    def render_frame():
+        """Set the fill target for the current settings and render one frame
+        into base["img"]. Touches no windows — call it twice to let the flex
+        fill converge (the first pass computes the exact gap stretch, the
+        second applies it) before applying the result."""
         global TARGET_H
+        s = load_settings()
+        cfgs = s.get("panels") or [{"monitor": 0, "position": "top-right", "offset": None}]
+        # fill height = the first panel's monitor minus the two vertical margins
+        disp0 = Gdk.Display.get_default()
+        m0 = (disp0.get_monitor(cfgs[0].get("monitor", 0))
+              or disp0.get_primary_monitor() or disp0.get_monitor(0))
+        TARGET_H = max(200, m0.get_workarea().height - 2 * cur_vmargin())
+        base["img"] = render(write_png=False)   # flex-filled to TARGET_H at native width
+
+    def tick(passes=1):
         try:
+            # Converge the flex fill first (see render_frame), so the panel is
+            # sized and placed exactly once, at its final size. Rendering twice
+            # and placing twice would make the window manager briefly show the
+            # first, un-converged size — the visible jump on section toggles.
+            for _ in range(max(1, passes)):
+                render_frame()
             s = load_settings()
             cfgs = s.get("panels") or [{"monitor": 0, "position": "top-right", "offset": None}]
-            # fill height = the first panel's monitor minus the two vertical margins
-            disp0 = Gdk.Display.get_default()
-            m0 = (disp0.get_monitor(cfgs[0].get("monitor", 0))
-                  or disp0.get_primary_monitor() or disp0.get_monitor(0))
-            TARGET_H = max(200, m0.get_workarea().height - 2 * cur_vmargin())
-            base["img"] = render(write_png=False)   # flex-filled to TARGET_H at native width
             sync_count(max(1, len(cfgs)))
             move_idx = s.get("move")
             if move_idx is True:
@@ -2461,16 +2475,12 @@ def run_window(interval=2.0):
             m = -1.0
         if m != watch_settings.mtime:
             watch_settings.mtime = m
-            # The flex fill converges on the *second* render: the first
-            # computes the exact gap stretch for the new layout, the second
-            # applies it. Render twice synchronously here — both run in this
-            # one main-loop callback, so GTK only ever paints the final,
-            # correct frame. Without this the panel jumps to a wrong height
-            # and settles only on the next metric tick (up to `interval`
-            # later) — the visible "springt hin und her, braucht 1-2 s" when
-            # several sections are toggled quickly.
-            tick()
-            tick()
+            # Two render passes converge the flex fill for the new layout, then
+            # the panel is placed once at its final size. Without this the
+            # panel jumps to a wrong height and settles only on the next metric
+            # tick (up to `interval` later) — the visible "springt hin und her"
+            # when sections are toggled.
+            tick(passes=2)
         return True
 
     try:
