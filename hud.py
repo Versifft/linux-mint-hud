@@ -2506,6 +2506,14 @@ def run_settings():
     scrolledwindow { border: none; box-shadow: none; }
     * { outline: none; -gtk-outline-radius: 0; }
 
+    /* Quiet, borderless secondary action (reset / close) */
+    .subtle {
+        background: none; background-image: none; border: none;
+        box-shadow: none; color: #8a94a4; font-weight: 600; padding: 5px 10px;
+    }
+    .subtle:hover { color: #dbe3ee; background-color: rgba(255,255,255,0.05); border: none; }
+    .subtle:active { background-color: rgba(255,255,255,0.08); }
+
     /* Bottom action bar */
     .actionbar { background-color: #14161a; border-top: 1px solid #262b33; }
     .header { background-color: #14161a; border-bottom: 1px solid #262b33; }
@@ -2525,7 +2533,7 @@ def run_settings():
     s = load_settings()
     win = Gtk.Window(title="Linux Mint HUD — Settings")
     win.set_border_width(0)
-    win.set_default_size(480, 860)
+    win.set_default_size(500, 840)
 
     # Outer layout: everything scrolls (header included), with only the action
     # bar pinned at the bottom.
@@ -2581,22 +2589,37 @@ def run_settings():
         counter[0] += 1
 
     # ---- Placement -------------------------------------------------------
-    _, pg, pc = make_group("Placement")
+    pbox, pg, pc = make_group("Placement")
     disp = Gdk.Display.get_default()
     panels_now = s.get("panels") or [{}]
 
     LBL = {0: "Move panel…", 1: "Move second panel…"}
+    # The move actions read as one cluster of contained buttons; "Reset
+    # positions" sits under them as a quiet, borderless secondary action.
+    place_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=9)
+
     move1 = _cls(Gtk.Button(label=LBL[0]), "ghost")
-    field(pg, pc, "Panel", move1)
+    move1.set_halign(Gtk.Align.START)
+    move1.set_size_request(240, -1)
+    place_box.pack_start(move1, False, False, 0)
+
     second_chk = Gtk.CheckButton(label="Second panel (drag it to another monitor)")
     second_chk.set_active(len(panels_now) >= 2)
-    field(pg, pc, "", second_chk)
+    place_box.pack_start(second_chk, False, False, 0)
+
     move2 = _cls(Gtk.Button(label=LBL[1]), "ghost")
+    move2.set_halign(Gtk.Align.START)
+    move2.set_size_request(240, -1)
     move2.set_no_show_all(True)                 # only shown when a second panel exists
     move2.set_visible(len(panels_now) >= 2)
-    field(pg, pc, "", move2)
-    reset_btn = Gtk.Button(label="Reset positions")
-    field(pg, pc, "", reset_btn)
+    place_box.pack_start(move2, False, False, 0)
+
+    reset_btn = _cls(Gtk.Button(label="Reset positions"), "subtle")
+    reset_btn.set_halign(Gtk.Align.START)
+    place_box.pack_start(reset_btn, False, False, 0)
+
+    pbox.pack_start(place_box, False, False, 0)
+    pbox.reorder_child(place_box, 1)            # sit above the edge-margin row
 
     def _nmon():
         return disp.get_n_monitors()
@@ -2652,6 +2675,9 @@ def run_settings():
     margin_spin = _noscroll(Gtk.SpinButton.new_with_range(0, 200, 1))
     margin_spin.set_value(s.get("margin", 22))
     field(pg, pc, "Edge margin (px)", margin_spin)
+    margin_spin.set_hexpand(False)
+    margin_spin.set_halign(Gtk.Align.START)
+    margin_spin.set_size_request(130, -1)
 
     # ---- Weather ---------------------------------------------------------
     _, wg, wc = make_group("Weather")
@@ -2660,7 +2686,7 @@ def run_settings():
     town = Gtk.Entry()
     town.set_placeholder_text("Town or city")
     town.set_text(loc.get("name", ""))          # the chosen city sits in the field
-    lookup = _cls(Gtk.Button(label="Look up"), "ghost")
+    lookup = Gtk.Button(label="Look up")
     locbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
     locbox.pack_start(town, True, True, 0)
     locbox.pack_start(lookup, False, False, 0)
@@ -2720,6 +2746,9 @@ def run_settings():
     units_combo.append("f", "Fahrenheit (°F)")
     units_combo.set_active_id(s.get("units", "c"))
     field(tg, tc, "Unit", units_combo)
+    units_combo.set_hexpand(False)
+    units_combo.set_halign(Gtk.Align.START)
+    units_combo.set_size_request(190, -1)
 
     cur_sens = s.get("sensors") or []
     auto_paths = {p for p in (_find_cpu_temp(), _find_disk_temp(), _find_wifi_temp()) if p}
@@ -2775,7 +2804,7 @@ def run_settings():
     status.set_line_wrap(True)
     actionbar.pack_start(status, True, True, 0)
     save = _cls(Gtk.Button(label="Save"), "accent")
-    close = Gtk.Button(label="Close")
+    close = _cls(Gtk.Button(label="Close"), "subtle")
     actionbar.pack_end(save, False, False, 0)
     actionbar.pack_end(close, False, False, 0)
     outer.pack_start(actionbar, False, False, 0)
