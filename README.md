@@ -7,7 +7,7 @@ windows, on every workspace, and clicks fall straight through it to the
 desktop underneath. The top slot shows Claude plan quota, weather, or
 alternates between the two.
 
-<img src="docs/hero-loop.gif" alt="The panel on a black desktop, its top slot slowly alternating between Claude plan quota and the local weather while everything below — the CPU/GPU/RAM gauges, history, thermals, memory, disk, network, power, battery and process sections — stays put.">
+<img src="docs/hero-loop.gif" alt="The panel in the top-right of a Linux Mint desktop, its top slot cutting between Claude plan quota and the local weather while everything below — the CPU/GPU/RAM gauges, history, thermals, memory, disk, network, power, battery and process sections — stays put.">
 
 ## What it shows
 
