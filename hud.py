@@ -1917,10 +1917,11 @@ def render(write_png=True):
         y += 22
     H = int(round(y))
 
-    natural = y - FLEX_POINTS * FLEX
+    # The panel renders at its natural content height and no longer stretches
+    # its gaps to fill the monitor: that let the resize grip only ever shrink
+    # it (it was already full height). Size is the user's to set now, capped by
+    # auto-fit so it can grow up to the monitor without overflowing.
     next_flex = 0.0
-    if FLEX_POINTS:
-        next_flex = max(0.0, min(FLEX_MAX, (TARGET_H - natural) / FLEX_POINTS))
 
     panel = panel_bg(H)
 
@@ -2143,7 +2144,7 @@ def run_window(interval=2.0):
         w, h = max(80, round(img.width * scale)), max(80, round(img.height * scale))
         mon = (disp.get_monitor(cfg.get("monitor", 0))
                or disp.get_primary_monitor() or disp.get_monitor(0))
-        usable = mon.get_workarea().height - 2 * load_settings().get("margin", MARGIN)
+        usable = mon.get_workarea().height - load_settings().get("margin", MARGIN)
         if h > usable > 0:
             k = usable / h
             w, h = max(80, round(w * k)), max(80, round(h * k))
@@ -2448,6 +2449,12 @@ def run_settings():
     }
     scrollbar slider { background-color: #3a4250; border-radius: 8px; min-width: 6px; }
     scrollbar slider:hover { background-color: #4a5568; }
+    undershoot.top, undershoot.bottom, undershoot.left, undershoot.right,
+    overshoot.top, overshoot.bottom, overshoot.left, overshoot.right {
+        background: none; background-image: none;
+    }
+    scrolledwindow { border: none; box-shadow: none; }
+    * { outline: none; -gtk-outline-radius: 0; }
 
     /* Bottom action bar */
     .actionbar { background-color: #14161a; border-top: 1px solid #262b33; }
@@ -2602,13 +2609,14 @@ def run_settings():
     loc_state = {"data": loc or None}
     town = Gtk.Entry()
     town.set_placeholder_text("Town or city")
+    town.set_text(loc.get("name", ""))          # the chosen city sits in the field
     lookup = _cls(Gtk.Button(label="Look up"), "ghost")
     locbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
     locbox.pack_start(town, True, True, 0)
     locbox.pack_start(lookup, False, False, 0)
     field(wg, wc, "Location", locbox)
-    loc_label = _cls(Gtk.Label(label=f"→ {loc['name']}" if loc.get("name") else "→ none (weather off)",
-                               xalign=0), "result")
+    loc_label = _cls(Gtk.Label(label="", xalign=0), "result")
+    loc_label.set_no_show_all(True)             # only appears to report a lookup
     field(wg, wc, "", loc_label)
 
     def do_lookup(_b):
@@ -2619,13 +2627,15 @@ def run_settings():
             url = "https://geocoding-api.open-meteo.com/v1/search?count=1&name=" + urllib.parse.quote(q)
             res = json.load(urllib.request.urlopen(url, timeout=8))["results"][0]
             loc_state["data"] = {"lat": res["latitude"], "lon": res["longitude"], "name": res["name"]}
+            town.set_text(res["name"])
             loc_label.get_style_context().remove_class("result")
             loc_label.get_style_context().add_class("result-ok")
-            loc_label.set_text(f"→ {res['name']}, {res.get('admin1', '')} {res['country_code']}")
+            loc_label.set_text(f"✓ {res['name']}, {res.get('admin1', '')} {res['country_code']}")
         except Exception:
             loc_label.get_style_context().remove_class("result-ok")
             loc_label.get_style_context().add_class("result")
-            loc_label.set_text("→ couldn't find that place")
+            loc_label.set_text("couldn't find that place")
+        loc_label.set_visible(True)
     lookup.connect("clicked", do_lookup)
 
     # ---- Panel sections --------------------------------------------------
