@@ -2092,6 +2092,43 @@ def run_window(interval=2.0):
         win.move(x, yy)
 
     panels = []
+
+    def snapped(pw, x, y, w, h):
+        """Nudge a dragged window onto tidy targets: the monitor's own margins
+        (so it clicks into a corner or an even top/bottom/side gap), and the
+        edges and top of any other panel (so a second panel lines up to the
+        same height and side distance)."""
+        disp = Gdk.Display.get_default()
+        mon = disp.get_monitor_at_point(x + w // 2, y + h // 2) or disp.get_primary_monitor()
+        wa = mon.get_workarea()
+        margin = load_settings().get("margin", MARGIN)
+        SNAP = 26
+        sx = [wa.x + margin, wa.x + wa.width - w - margin]
+        sy = [wa.y + margin, wa.y + wa.height - h - margin]
+        for other in panels:
+            if other is pw:
+                continue
+            ow = other["win"]
+            try:
+                ox, oy = ow.get_position()
+                oaw, oah = ow.get_allocated_width(), ow.get_allocated_height()
+            except Exception:
+                continue
+            omon = disp.get_monitor_at_point(ox + oaw // 2, oy + oah // 2) or mon
+            owa = omon.get_workarea()
+            sy.append(wa.y + (oy - owa.y))
+            sy.append(wa.y + wa.height - h - ((owa.y + owa.height) - (oy + oah)))
+            sx.append(wa.x + (ox - owa.x))
+            sx.append(wa.x + wa.width - w - ((owa.x + owa.width) - (ox + oaw)))
+        for t in sx:
+            if abs(x - t) <= SNAP:
+                x = t
+                break
+        for t in sy:
+            if abs(y - t) <= SNAP:
+                y = t
+                break
+        return x, y
     base = {"img": None}                 # the latest native-size rendered frame
     GRIP = 30                            # size of the resize handle, in px
 
@@ -2214,8 +2251,11 @@ def run_window(interval=2.0):
                     win.set_size_request(dimg.width, dimg.height)
                 win.queue_draw()
             else:
-                win.move(int(drag["wx"] + (ev.x_root - drag["sx"])),
-                         int(drag["wy"] + (ev.y_root - drag["sy"])))
+                nx = int(drag["wx"] + (ev.x_root - drag["sx"]))
+                ny = int(drag["wy"] + (ev.y_root - drag["sy"]))
+                w, h = win.get_allocated_width(), win.get_allocated_height()
+                nx, ny = snapped(pw, nx, ny, w, h)
+                win.move(nx, ny)
             return False
 
         def on_release(_w, ev):
@@ -2239,11 +2279,12 @@ def run_window(interval=2.0):
                 cfgs[pw["idx"]] = {"monitor": mon_index(disp, mon), "position": "free",
                                    "offset": [wx - wa.x, wy - wa.y],
                                    "scale": cfgs[pw["idx"]].get("scale", 1.0)}
+            # stay in move mode after a drag: the settings' "Save position"
+            # button (which clears settings["move"]) is what ends it, so the
+            # user can nudge or resize repeatedly first.
             s["panels"] = cfgs
-            s["move"] = None
             save_settings(s)
             st["placekey"] = None
-            exit_move()
             return True
 
         def on_destroy(_w):
@@ -2328,7 +2369,7 @@ def run_settings():
     Gtk.Settings.get_default().set_property("gtk-application-prefer-dark-theme", True)
     css = b"""
     window { background-color: #101216; }
-    .content { background-color: #101216; }
+    scrolledwindow, scrolledwindow viewport, viewport, .content { background-color: #101216; }
     label { color: #cfd6e0; font-size: 13px; }
 
     /* Header */
@@ -2487,13 +2528,15 @@ def run_settings():
     disp = Gdk.Display.get_default()
     panels_now = s.get("panels") or [{}]
 
-    move1 = _cls(Gtk.Button(label="Move panel…"), "ghost")
+    LBL = {0: "Move panel…", 1: "Move second panel…"}
+    move1 = _cls(Gtk.Button(label=LBL[0]), "ghost")
     field(pg, pc, "Panel", move1)
     second_chk = Gtk.CheckButton(label="Second panel (drag it to another monitor)")
     second_chk.set_active(len(panels_now) >= 2)
     field(pg, pc, "", second_chk)
-    move2 = _cls(Gtk.Button(label="Move second panel…"), "ghost")
-    move2.set_sensitive(len(panels_now) >= 2)
+    move2 = _cls(Gtk.Button(label=LBL[1]), "ghost")
+    move2.set_no_show_all(True)                 # only shown when a second panel exists
+    move2.set_visible(len(panels_now) >= 2)
     field(pg, pc, "", move2)
     reset_btn = Gtk.Button(label="Reset positions")
     field(pg, pc, "", reset_btn)
@@ -2501,15 +2544,26 @@ def run_settings():
     def _nmon():
         return disp.get_n_monitors()
 
-    def do_move(idx):
+    def refresh_move_labels():
+        mv = load_settings().get("move")
+        move1.set_label("Save position" if mv == 0 else LBL[0])
+        move2.set_label("Save position" if mv == 1 else LBL[1])
+
+    def toggle_move(idx):
         st = dict(load_settings())
-        cfgs = [dict(c) for c in (st.get("panels") or [])] or [{"monitor": 0, "position": "top-right", "offset": None}]
-        while len(cfgs) <= idx:
-            cfgs.append({"monitor": 1 if _nmon() > 1 else 0, "position": "top-right", "offset": None})
-        st["panels"] = cfgs
-        st["move"] = idx
-        save_settings(st)
-        status.set_text("Drag that panel where you want it, then release to drop it.")
+        if st.get("move") == idx:                 # second click on the same button
+            st["move"] = None
+            save_settings(st)
+            status.set_text("Position saved.")
+        else:
+            cfgs = [dict(c) for c in (st.get("panels") or [])] or [{"monitor": 0, "position": "top-right", "offset": None}]
+            while len(cfgs) <= idx:
+                cfgs.append({"monitor": 1 if _nmon() > 1 else 0, "position": "top-right", "offset": None})
+            st["panels"] = cfgs
+            st["move"] = idx
+            save_settings(st)
+            status.set_text("Drag the panel (its corner grip resizes). Click “Save position” when done.")
+        refresh_move_labels()
 
     def set_two(active):
         st = dict(load_settings())
@@ -2517,9 +2571,11 @@ def run_settings():
         if active and len(cfgs) < 2:
             cfgs.append({"monitor": 1 if _nmon() > 1 else 0, "position": "top-right", "offset": None})
         st["panels"] = cfgs[:2] if active else cfgs[:1]
-        st["move"] = None
+        if not active and st.get("move") == 1:
+            st["move"] = None
         save_settings(st)
-        move2.set_sensitive(active)
+        move2.set_visible(active)
+        refresh_move_labels()
 
     def do_reset(_b):
         st = dict(load_settings())
@@ -2527,12 +2583,14 @@ def run_settings():
         st["panels"] = [{"monitor": 0, "position": "top-right", "offset": None} for _ in range(k)]
         st["move"] = None
         save_settings(st)
+        refresh_move_labels()
         status.set_text("Positions reset to the top-right corner.")
 
-    move1.connect("clicked", lambda *_: do_move(0))
-    move2.connect("clicked", lambda *_: do_move(1))
+    move1.connect("clicked", lambda *_: toggle_move(0))
+    move2.connect("clicked", lambda *_: toggle_move(1))
     second_chk.connect("toggled", lambda cb: set_two(cb.get_active()))
     reset_btn.connect("clicked", do_reset)
+    refresh_move_labels()
 
     margin_spin = _noscroll(Gtk.SpinButton.new_with_range(0, 200, 1))
     margin_spin.set_value(s.get("margin", 22))
