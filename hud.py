@@ -1468,7 +1468,8 @@ _SETTINGS_MTIME = -1.0
 # The display settings each panel carries its own copy of (placement —
 # monitor and the four edge margins — is per-panel too).
 PANEL_DISPLAY_KEYS = ("top", "bottom", "left", "right", "units", "disks",
-                      "sensors", "peripherals", "sections", "order")
+                      "sensors", "peripherals", "sections", "order",
+                      "weather_show_location")
 
 
 def panel_box(cfg, wa):
@@ -1558,7 +1559,7 @@ def load_settings():
         for p in raw_panels:
             q = dict(p) if isinstance(p, dict) else {}
             q.setdefault("monitor", 0)
-            for k in ("units", "disks", "sensors", "peripherals"):
+            for k in ("units", "disks", "sensors", "peripherals", "weather_show_location"):
                 q.setdefault(k, tmpl[k])
             # Four independent edge margins. Migrate from the old symmetric
             # vmargin/hmargin (or a free offset) when a panel predates them.
@@ -1820,8 +1821,8 @@ def render(frame=None, cfg=None, target_h=None, flex_in=0.0, width=None, write_p
     cfg = cfg or {}
     SECTIONS = cfg.get("sections") or _s.get("sections")
     UNITS = cfg.get("units") or _s.get("units", "c")
-    WEATHER_UNITS = _s.get("weather_units", "c")          # separate from hardware temps
-    SHOW_LOC = _s.get("weather_show_location", True)
+    WEATHER_UNITS = _s.get("weather_units", "c")          # global (one weather source)
+    SHOW_LOC = cfg.get("weather_show_location", _s.get("weather_show_location", True))
     SENSOR_NAMES = _s.get("sensor_names") or {}
     disks_sel = cfg.get("disks", _s.get("disks"))
     sensors_sel = cfg.get("sensors", _s.get("sensors"))
@@ -3153,8 +3154,8 @@ def run_settings():
     wunit_combo.set_halign(Gtk.Align.START)
     wunit_combo.set_size_request(190, -1)
     field(wg, wc, "Weather unit", wunit_combo)
-    showloc_chk = Gtk.CheckButton(label="Show location name")
-    showloc_chk.set_active(bool(s.get("weather_show_location", True)))
+    showloc_chk = Gtk.CheckButton(label="Show location name (this panel)")
+    showloc_chk.set_active(bool(_P0.get("weather_show_location", True)))
     field(wg, wc, "", showloc_chk)
 
     def do_lookup(_b):
@@ -3399,12 +3400,12 @@ def run_settings():
         # Shared (not per-panel): weather location + unit, and sensor names.
         new["location"] = loc_state["data"]
         new["weather_units"] = wunit_combo.get_active_id() or "c"
-        new["weather_show_location"] = showloc_chk.get_active()
         new["sensor_names"] = {k: v.strip() for k, v in sensor_names_state.items() if v.strip()}
         cfgs = [dict(c) for c in (new.get("panels") or [{}])]
         while len(cfgs) <= editing[0]:
             cfgs.append({"monitor": 0})
         pcfg = dict(cfgs[editing[0]])       # keeps the on-disk margins as they are
+        pcfg["weather_show_location"] = showloc_chk.get_active()   # per panel
         pcfg["units"] = units_combo.get_active_id() or "c"
         pcfg["sections"] = {k: cb.get_active() for k, cb in checks.items()}
         pcfg["order"] = list(full_order)
@@ -3449,6 +3450,7 @@ def run_settings():
             for _k, _sp in margin_spins.items():
                 _sp.set_value(_rm.get(_k, 22))
             units_combo.set_active_id(pcfg.get("units", "c"))
+            showloc_chk.set_active(bool(pcfg.get("weather_show_location", True)))
             sec = pcfg.get("sections") or {}
             for k, cb in checks.items():
                 cb.set_active(bool(sec.get(k, True)))
