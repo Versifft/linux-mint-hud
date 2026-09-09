@@ -2712,6 +2712,14 @@ def run_settings():
         _sp.set_halign(Gtk.Align.START)
         _sp.set_size_request(130, -1)
 
+    def live_margins(*_):
+        st = dict(load_settings())
+        st["vmargin"] = int(vmargin_spin.get_value())
+        st["hmargin"] = int(hmargin_spin.get_value())
+        save_settings(st)                    # panel re-sizes/re-places on its next tick
+    vmargin_spin.connect("value-changed", live_margins)
+    hmargin_spin.connect("value-changed", live_margins)
+
     # ---- Weather ---------------------------------------------------------
     _, wg, wc = make_group("Weather")
     loc = s.get("location") or {}
