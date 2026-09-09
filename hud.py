@@ -2440,9 +2440,15 @@ def run_window(interval=2.0):
             return None
         wa = monitor_of(cfg).get_workarea()
         x, y, bw, bh, m = eff_margins(pw, cfg, wa)
+        maxh = wa.height - m["top"] - 2
+        if pw["state"].get("resizing"):
+            # Live feedback while the grip is dragged: stretch the current frame
+            # straight to the box (one cheap resize, no re-render — that was far
+            # too heavy per motion event). The next tick re-renders it crisply.
+            w, h = max(120, int(bw)), max(80, min(int(bh), maxh))
+            return img.resize((w, h), Image.BILINEAR)
         k = bw / img.width
         w, h = max(120, round(img.width * k)), max(80, round(img.height * k))
-        maxh = wa.height - m["top"] - 2
         if h > maxh > 0:
             k2 = maxh / h
             w, h = max(120, round(w * k2)), max(80, round(h * k2))
@@ -2466,17 +2472,6 @@ def run_window(interval=2.0):
         wa = monitor_of(cfg).get_workarea()
         x, y, bw, bh, m = eff_margins(pw, cfg, wa)
         return max(120, bh * W / bw)
-
-    def render_one(pw, cfg):
-        """Re-render just this panel from the last metric sample (used for live
-        feedback while its grip is dragged)."""
-        st = pw["state"]
-        M = last_frame[0] if last_frame[0] is not None else gather_frame()
-        tnative = _native_target(pw, cfg)
-        img, fl = st.get("img"), st.get("flex", 0.0)
-        for _ in range(2):
-            img, fl = render(frame=M, cfg=cfg, target_h=tnative, flex_in=fl)
-        st["img"], st["flex"] = img, fl
 
     def setup(pw):
         win, st = pw["win"], pw["state"]
@@ -2569,10 +2564,13 @@ def run_window(interval=2.0):
                                "margins": {**m0, "right": new_right, "bottom": new_bottom}}
                 st["resizing"] = True
                 cfg = _cfg_of()
-                render_one(pw, cfg)
-                dimg = paint(pw, cfg)
+                dimg = paint(pw, cfg)          # one cheap rescale, no re-render
                 if dimg is not None:
                     place(pw, cfg, dimg.width, dimg.height)
+                    gw = win.get_window()
+                    if gw is not None:          # keep the grown area clickable
+                        gw.input_shape_combine_region(
+                            cairo.Region(cairo.RectangleInt(0, 0, dimg.width, dimg.height)), 0, 0)
                 win.queue_draw()
             else:
                 nx = int(drag["wx"] + (ev.x_root - drag["sx"]))
@@ -2662,6 +2660,8 @@ def run_window(interval=2.0):
         cfgs = load_settings().get("panels") or [DEFAULT_CFG]
         for i, pw in enumerate(panels):
             st = pw["state"]
+            if st.get("drag", {}).get("active"):
+                continue          # don't re-render while actively dragging (hitch)
             cfg = cfgs[i] if i < len(cfgs) else {}
             tnative = _native_target(pw, cfg)
             img, fl = st.get("img"), st.get("flex", 0.0)
