@@ -124,7 +124,16 @@ def workarea_height(default=1160):
 
 
 TARGET_H = workarea_height() - 2 * MARGIN
-FLEX_MAX = 400
+FLEX_MAX = 400          # most a gap may stretch (fill a tall work area)
+FLEX_MIN = -14          # most a gap may shrink (fit content taller than the
+                        # target) — enough to close the section gaps and tighten
+                        # a little beyond, so the fill can compress rather than
+                        # fall back to a downscale over a wide range of margins.
+                        # Letting
+                        # the fill compress as well as stretch keeps the panel
+                        # at its native width when toggling sections, instead of
+                        # falling back to a whole-frame downscale that also
+                        # changes the width.
 
 FLEX = 0.0
 FLEX_POINTS = 0
@@ -2133,7 +2142,10 @@ def render(frame=None, cfg=None, target_h=None, flex_in=0.0, write_png=False):
     natural = y - FLEX_POINTS * FLEX
     next_flex = 0.0
     if FLEX_POINTS:
-        next_flex = max(0.0, min(FLEX_MAX, (target - natural) / FLEX_POINTS))
+        # Stretch (positive) to fill a tall work area, or compress (down to
+        # FLEX_MIN) to fit content taller than the target — either way the width
+        # stays native, so toggling sections never changes it.
+        next_flex = max(FLEX_MIN, min(FLEX_MAX, (target - natural) / FLEX_POINTS))
 
     panel = panel_bg(H)
 
@@ -2359,12 +2371,19 @@ def run_window(interval=2.0):
                or disp.get_primary_monitor() or disp.get_monitor(0))
         wa_h = mon.get_workarea().height
         vm = cur_vmargin_for(pw, cfg)
-        target = max(140, wa_h - 2 * vm)
-        # Never scale *up* (that would only widen the panel); downscale to fit
-        # when the content is taller than the target (a large vmargin, or a
-        # shorter monitor).
-        k = min(1.0, target / img.height)
+        # At rest the frame is already sized to its target by the flex fill
+        # (which stretches or compresses the gaps), so keep it at native width —
+        # scaling to the target here would couple the width to the content, the
+        # very thing that made the panel widen/narrow as sections were toggled.
+        # Only while the grip is dragged do we scale to the moving target for
+        # live feedback (the frame is re-rendered on the next tick).
+        if pw["state"].get("resizing"):
+            target = max(140, wa_h - 2 * vm)
+            k = min(1.0, target / img.height)
+        else:
+            k = 1.0
         w, h = max(80, round(img.width * k)), max(80, round(img.height * k))
+        # Off-screen safety only: never let a panel be taller than its monitor.
         maxh = wa_h - max(4, vm)
         if h > maxh > 0:
             k2 = maxh / h
