@@ -22,6 +22,13 @@ branch — nothing here has landed on `main` yet.
 - [ ] Free offset, not just corners
 - [ ] Handle mixed DPI
 
+## Readouts (from tester feedback)
+- [x] °C / °F switch, applied to every temperature (Celsius internally)
+- [x] Skip peripheral batteries (a Solaar mouse/keyboard) so desktops show none
+- [x] Show multiple disks/mounts, chosen in the settings window
+- [x] Pick which temperature sensors appear in the thermals row
+- [ ] Optional per-disk I/O and per-disk temperature
+
 ## Hardware coverage
 - [ ] Keep collecting reports of missing/wrong readouts on AMD / NVIDIA /
       desktops, and widen the detection where needed

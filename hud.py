@@ -40,8 +40,20 @@ DEFAULT_SETTINGS = {
     "position": "top-right",
     "margin": 22,
     "location": None,
+    "units": "c",                  # "c" or "f", for every temperature shown
+    "disks": None,                 # mount points to show; None -> just "/"
+    "sensors": None,               # temp-sensor ids for thermals; None -> auto
     "sections": {"thermals": True, "network": True, "power": True, "processes": True},
 }
+
+
+def temp_str(c, units, decimals=0):
+    """A temperature in degrees C formatted for display, converted to Fahrenheit
+    when units == 'f'. Colour thresholds stay in Celsius; only the text changes."""
+    if c is None:
+        return "—"
+    v = c * 9 / 5 + 32 if units == "f" else c
+    return f"{v:.{decimals}f}°"
 
 PSUPPLY = "/sys/class/power_supply"
 DETECT_TTL = 30
@@ -698,13 +710,20 @@ def net_iface():
 
 
 def battery_path():
-    """First power_supply device of type Battery, or None on a desktop."""
+    """The system battery's power_supply device, or None on a desktop.
+
+    Peripheral batteries (a wireless mouse or keyboard, e.g. via Solaar) also
+    show up here as type Battery; they carry scope=Device, so they are skipped
+    — otherwise a desktop would show its keyboard's charge as the machine's."""
     def find():
         try:
             for name in sorted(os.listdir(PSUPPLY)):
                 d = f"{PSUPPLY}/{name}"
-                if read_first(f"{d}/type", default="") == "Battery":
-                    return d
+                if read_first(f"{d}/type", default="") != "Battery":
+                    continue
+                if read_first(f"{d}/scope", default="") == "Device":
+                    continue
+                return d
         except OSError:
             pass
         return None
@@ -879,6 +898,34 @@ def net_bytes(iface):
     return 0, 0
 
 
+REAL_FS = {"ext2", "ext3", "ext4", "btrfs", "xfs", "f2fs", "vfat", "exfat",
+           "ntfs", "ntfs3", "zfs", "reiserfs", "jfs", "udf", "bcachefs"}
+
+
+def disk_mounts():
+    """Mounted real (block-backed) filesystems as (mountpoint, device), one per
+    device, so the settings window can offer every drive in the machine rather
+    than only the root filesystem."""
+    def find():
+        seen, out = set(), []
+        try:
+            with open("/proc/mounts") as f:
+                for line in f:
+                    parts = line.split()
+                    if len(parts) < 3:
+                        continue
+                    dev, mp, fs = parts[0], parts[1], parts[2]
+                    if not dev.startswith("/dev/") or fs not in REAL_FS or dev in seen:
+                        continue
+                    seen.add(dev)
+                    mp = mp.replace("\\040", " ")
+                    out.append((mp, dev))
+        except OSError:
+            pass
+        return out or [("/", "")]
+    return _detect("mounts", find)
+
+
 def diskio_sectors():
     r = w = 0
     try:
@@ -995,6 +1042,65 @@ def temps():
         v = read_first(p, int) if p else None
         out.append(v / 1000 if v is not None else None)
     return tuple(out)
+
+
+def _sensor_thresholds(text):
+    t = text.lower()
+    if any(k in t for k in ("coretemp", "k10temp", "cpu", "package", "tctl", "tdie", "x86_pkg")):
+        return 80, 95
+    if any(k in t for k in ("nvme", "drivetemp", "composite", "ssd", "disk")):
+        return 60, 75
+    if any(k in t for k in ("wifi", "iwlwifi", "ath", "mt79", "wlan")):
+        return 75, 85
+    if any(k in t for k in ("amdgpu", "gpu", "edge", "junction")):
+        return 80, 95
+    return 70, 90
+
+
+def _sensor_short(chip, lab):
+    t = (lab or "").lower()
+    c = chip.lower()
+    if "package id 0" in t or (c == "coretemp" and not lab):
+        return "CPU"
+    if c == "k10temp" and t in ("tdie", "tctl", ""):
+        return "CPU"
+    if c == "nvme" and t == "composite":
+        return "SSD"
+    if c.startswith(("iwlwifi", "ath", "mt79", "rtw", "mwifiex", "brcm")):
+        return "WIFI"
+    return (lab or chip)[:10]
+
+
+def list_sensors():
+    """Every readable temperature sensor as {id, label, full, path, warn, crit}.
+    id (chip + input) is stable across runs so a selection can be saved; label
+    is short for the panel, full is descriptive for the settings window."""
+    out = []
+    for h in sorted(glob.glob("/sys/class/hwmon/hwmon*")):
+        chip = read_first(f"{h}/name", default="") or os.path.basename(h)
+        labels = {}
+        for lab in glob.glob(f"{h}/temp*_label"):
+            labels[lab.replace("_label", "_input")] = read_first(lab, default="")
+        for inp in sorted(glob.glob(f"{h}/temp*_input")):
+            base = os.path.basename(inp).replace("_input", "")
+            lab = labels.get(inp, "")
+            warn, crit = _sensor_thresholds(f"{chip} {lab or base}")
+            out.append({"id": f"{chip}:{base}", "label": _sensor_short(chip, lab),
+                        "full": f"{chip} · {lab}" if lab else chip,
+                        "path": inp, "warn": warn, "crit": crit})
+    for z in sorted(glob.glob("/sys/class/thermal/thermal_zone*")):
+        ty = read_first(f"{z}/type", default="")
+        p = f"{z}/temp"
+        if ty and os.path.exists(p):
+            warn, crit = _sensor_thresholds(ty)
+            out.append({"id": f"zone:{ty}", "label": ty[:10], "full": f"zone · {ty}",
+                        "path": p, "warn": warn, "crit": crit})
+    return out
+
+
+def read_sensor(path):
+    v = read_first(path, int)
+    return v / 1000 if v is not None else None
 
 
 def temp_gradient(t, warn, crit):
@@ -1284,7 +1390,9 @@ def panel_bg(H):
 
 def render(write_png=True):
     global HISTORY, FLEX, FLEX_POINTS, _STATE, _PERSISTED
-    SECTIONS = load_settings()["sections"]
+    _s = load_settings()
+    SECTIONS = _s["sections"]
+    UNITS = _s.get("units", "c")
     now = time.time()
     prev = _STATE if _STATE is not None else load_json(STATE_FILE, {})
     elapsed = max(0.001, now - prev.get("t", now - 2))
@@ -1474,7 +1582,7 @@ def render(write_png=True):
         t = weather["temp"]
         f_temp = F(MONO_LIGHT, T_HERO)
         icon_s = 22
-        ttxt = f"{t}°"
+        ttxt = temp_str(t, UNITS)
         tw = measure(f_temp, ttxt) / SS
         iw = icon_s * 2.5
         gap_it = 14
@@ -1490,7 +1598,7 @@ def render(write_png=True):
                  ("feels", weather['feels']))
         colw = CW / 3.0
         for i, (lab, tval) in enumerate(cells):
-            val = f"{tval}°"
+            val = temp_str(tval, UNITS)
             vcol = weather_temp_color(tval)
             cx = PAD + colw * (i + 0.5)
             lw = measure(f_dl, lab.upper(), 1.4) / SS
@@ -1565,14 +1673,21 @@ def render(write_png=True):
     else:
         y += 6
 
-    therms = (("cpu", cpu_t, 80, 95), ("ssd", nvme_t, 65, 75),
-              ("wifi", wifi_t, 75, 85))
+    sel = _s.get("sensors")
+    if sel:
+        by_id = {s["id"]: s for s in list_sensors()}
+        chosen = [by_id[i] for i in sel if i in by_id][:4]
+        therms = [(s["label"].lower(), read_sensor(s["path"]), s["warn"], s["crit"])
+                  for s in chosen]
+    else:
+        therms = (("cpu", cpu_t, 80, 95), ("ssd", nvme_t, 65, 75),
+                  ("wifi", wifi_t, 75, 85))
     f_tl, f_tv = F(UI_SEMI, T_MICRO), F(MONO_REG, T_BODY)
     groups = []
     for lab, tv, warn, crit in therms:
         if tv is None:
             continue
-        val = f"{tv:.0f}°"
+        val = temp_str(tv, UNITS)
         lw = measure(f_tl, lab.upper(), 1.4) / SS
         vw = measure(f_tv, val) / SS
         groups.append((lab.upper(), lw, val, vw, temp_gradient(tv, warn, crit)))
@@ -1603,12 +1718,33 @@ def render(write_png=True):
         y += 8
     y += gap(22)
 
-    dfrac = disk_used / disk_total
     label(d, PAD, y, "disk", PINK)
-    text(d, R, y - 2, f"{fmt_bytes(disk_used)} / {fmt_bytes(disk_total)}", f_val, TEXT, anchor="r")
-    y += 16
-    bar(img, PAD, y, CW, 6, dfrac, state_color(dfrac * 100, PINK))
-    y += 15
+    infos = []
+    for mp in (_s.get("disks") or ["/"]):
+        try:
+            vfs2 = os.statvfs(mp)
+            tot = vfs2.f_blocks * vfs2.f_frsize
+            usd = tot - vfs2.f_bfree * vfs2.f_frsize
+            if tot:
+                infos.append((mp, usd, tot))
+        except OSError:
+            pass
+    if not infos:
+        infos = [("/", disk_used, disk_total)]
+    if len(infos) == 1:
+        mp, usd, tot = infos[0]
+        text(d, R, y - 2, f"{fmt_bytes(usd)} / {fmt_bytes(tot)}", f_val, TEXT, anchor="r")
+        y += 16
+        bar(img, PAD, y, CW, 6, usd / tot, state_color(usd / tot * 100, PINK))
+        y += 15
+    else:
+        y += 18
+        for mp, usd, tot in infos:
+            label(d, PAD, y, mp, PINK, size=T_MICRO)
+            text(d, R, y - 2, f"{fmt_bytes(usd)} / {fmt_bytes(tot)}", f_val_sm, TEXT, anchor="r")
+            y += 14
+            bar(img, PAD, y, CW, 5, usd / tot, state_color(usd / tot * 100, PINK))
+            y += 13
     text(d, PAD, y, "read", F(UI_MED, T_BODY), TEXT)
     text(d, PAD + 34, y, fmt_bytes(rd, True), f_val_sm, TEXT)
     text(d, R, y, fmt_bytes(wr, True), f_val_sm, TEXT, anchor="r")
@@ -2064,6 +2200,12 @@ def run_settings():
     margin_spin.set_value(s.get("margin", 22))
     add_row("Edge margin (px)", margin_spin)
 
+    units_combo = Gtk.ComboBoxText()
+    units_combo.append("c", "Celsius (°C)")
+    units_combo.append("f", "Fahrenheit (°F)")
+    units_combo.set_active_id(s.get("units", "c"))
+    add_row("Temperature", units_combo)
+
     loc = s.get("location") or {}
     loc_state = {"data": loc or None}
     town = Gtk.Entry()
@@ -2100,6 +2242,40 @@ def run_settings():
         secbox.pack_start(cb, False, False, 0)
     add_row("Sections", secbox)
 
+    cur_disks = s.get("disks") or ["/"]
+    disk_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+    disk_checks = {}
+    for mp, dev in disk_mounts():
+        tag = f"  ({os.path.basename(dev)})" if dev else ""
+        cb = Gtk.CheckButton(label=f"{mp}{tag}")
+        cb.set_active(mp in cur_disks)
+        disk_checks[mp] = cb
+        disk_box.pack_start(cb, False, False, 0)
+    add_row("Disks", disk_box)
+
+    cur_sens = s.get("sensors") or []
+    auto_paths = {p for p in (_find_cpu_temp(), _find_disk_temp(), _find_wifi_temp()) if p}
+    sens_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+    sens_checks = {}
+    sensors = list_sensors()
+    for se in sensors:
+        val = read_sensor(se["path"])
+        vtxt = f"   {val:.0f}°C" if val is not None else ""
+        cb = Gtk.CheckButton(label=f"{se['full']}{vtxt}")
+        on = se["id"] in cur_sens if cur_sens else (se["path"] in auto_paths)
+        cb.set_active(on)
+        sens_checks[se["id"]] = cb
+        sens_box.pack_start(cb, False, False, 0)
+    if len(sensors) > 6:
+        sw = Gtk.ScrolledWindow()
+        sw.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        sw.set_min_content_height(150)
+        sw.add(sens_box)
+        add_row("Temp sensors", sw)
+    else:
+        add_row("Temp sensors", sens_box)
+    add_row("", Gtk.Label(label="up to 4 sensors are shown in the panel", xalign=0))
+
     status = Gtk.Label(label="", xalign=0)
     add_row("", status)
     btns = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
@@ -2115,7 +2291,12 @@ def run_settings():
         new["position"] = pos_combo.get_active_id() or "top-right"
         new["margin"] = int(margin_spin.get_value())
         new["location"] = loc_state["data"]
+        new["units"] = units_combo.get_active_id() or "c"
         new["sections"] = {k: cb.get_active() for k, cb in checks.items()}
+        dsel = [mp for mp, cb in disk_checks.items() if cb.get_active()]
+        new["disks"] = dsel or None
+        ssel = [sid for sid, cb in sens_checks.items() if cb.get_active()]
+        new["sensors"] = ssel or None
         save_settings(new)
         status.set_text("Saved — the panel updates within a second.")
     save.connect("clicked", do_save)
