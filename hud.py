@@ -2184,36 +2184,155 @@ def run_settings():
 
     Gtk.Settings.get_default().set_property("gtk-application-prefer-dark-theme", True)
     css = b"""
-    window { background-color: #16181c; }
-    label { color: #cfd6e0; }
-    entry, spinbutton, spinbutton entry, combobox button, button {
-        background-image: none; background-color: #23262c; color: #e9eef5;
-        border: 1px solid #333a44; border-radius: 6px;
+    window { background-color: #101216; }
+    .content { background-color: #101216; }
+    label { color: #cfd6e0; font-size: 13px; }
+
+    /* Header */
+    .app-title { color: #e9eef5; font-size: 18px; font-weight: 800; }
+    .app-subtitle { color: #8a94a4; font-size: 12px; }
+
+    /* Grouped cards */
+    .group {
+        background-color: #191c22;
+        border: 1px solid #262b33;
+        border-radius: 14px;
     }
-    button:hover { background-color: #2c313a; }
-    checkbutton { color: #cfd6e0; }
-    .accent, .accent:hover { background-color: #3b82f6; color: #ffffff; border-color: #3b82f6; }
-    .hint { color: #8a94a4; font-size: 11px; }
+    .group-heading {
+        color: #60b0ff; font-size: 11px; font-weight: 800;
+        letter-spacing: 1.4px;
+    }
+    .field-label { color: #97a1b0; font-size: 13px; }
+
+    /* Inputs */
+    entry, spinbutton, spinbutton entry, combobox button {
+        background-image: none; background-color: #23262c; color: #e9eef5;
+        border: 1px solid #333a44; border-radius: 9px;
+        padding: 6px 10px; caret-color: #60b0ff;
+    }
+    entry { padding: 7px 11px; }
+    entry image { color: #8a94a4; }
+    entry:focus, spinbutton:focus, spinbutton entry:focus,
+    combobox button:focus, combobox:focus button {
+        border-color: #3b82f6;
+    }
+    spinbutton, spinbutton entry { border-radius: 9px; }
+    combobox button { padding: 6px 10px; }
+    combobox arrow { color: #8a94a4; min-height: 14px; min-width: 14px; }
+
+    /* Buttons */
+    button {
+        background-image: none; background-color: #23262c; color: #e9eef5;
+        border: 1px solid #333a44; border-radius: 9px; padding: 7px 14px;
+        font-weight: 600;
+    }
+    button:hover { background-color: #2c313a; border-color: #414a57; }
+    button:active { background-color: #30363f; }
+    .ghost {
+        background-color: rgba(96,176,255,0.08);
+        border: 1px solid #2f4257; color: #cfe0f5;
+    }
+    .ghost:hover { background-color: rgba(96,176,255,0.16); border-color: #3b82f6; }
+    .accent {
+        background-color: #3b82f6; color: #ffffff; border-color: #3b82f6;
+        font-weight: 700; padding: 7px 20px;
+    }
+    .accent:hover { background-color: #60b0ff; border-color: #60b0ff; }
+    .accent:active { background-color: #2f6fd6; }
+
+    /* Checkboxes */
+    checkbutton { color: #cfd6e0; font-size: 13px; }
+    checkbutton check {
+        background-color: #23262c; border: 1px solid #3a4250;
+        border-radius: 5px; min-width: 15px; min-height: 15px;
+    }
+    checkbutton:hover check { border-color: #4a5568; }
+    checkbutton check:checked {
+        background-color: #3b82f6; border-color: #3b82f6; color: #ffffff;
+    }
+
+    /* Secondary text */
+    .hint { color: #6f7887; font-size: 11px; }
+    .result { color: #8a94a4; font-size: 12px; }
+    .result-ok { color: #7fc6a0; font-size: 12px; }
+    .status-ok { color: #7fc6a0; font-size: 12px; }
+
+    /* Scrolled sensor list */
+    .sensor-scroll {
+        background-color: #14171c; border: 1px solid #262b33;
+        border-radius: 10px;
+    }
+    scrollbar slider { background-color: #3a4250; border-radius: 8px; min-width: 6px; }
+    scrollbar slider:hover { background-color: #4a5568; }
+
+    /* Bottom action bar */
+    .actionbar { background-color: #14161a; border-top: 1px solid #262b33; }
+    .header { background-color: #14161a; border-bottom: 1px solid #262b33; }
+    separator { background-color: #262b33; min-height: 1px; min-width: 1px; }
     """
     prov = Gtk.CssProvider()
     prov.load_from_data(css)
     Gtk.StyleContext.add_provider_for_screen(
         Gdk.Screen.get_default(), prov, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 
+    def _cls(w, *names):
+        ctx = w.get_style_context()
+        for nm in names:
+            ctx.add_class(nm)
+        return w
+
     s = load_settings()
     win = Gtk.Window(title="Linux Mint HUD — Settings")
-    win.set_border_width(16)
-    grid = Gtk.Grid(row_spacing=10, column_spacing=12)
-    win.add(grid)
-    row = [0]
+    win.set_border_width(0)
+    win.set_default_size(480, 860)
 
-    def add_row(label_text, widget):
+    # Outer layout: fixed header, scrollable grouped content, fixed action bar.
+    outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+    win.add(outer)
+
+    header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+    _cls(header, "header")
+    header.set_border_width(18)
+    header.pack_start(_cls(Gtk.Label(label="Linux Mint HUD", xalign=0), "app-title"), False, False, 0)
+    header.pack_start(_cls(Gtk.Label(label="Panel appearance & readouts", xalign=0), "app-subtitle"), False, False, 0)
+    outer.pack_start(header, False, False, 0)
+
+    scroller = Gtk.ScrolledWindow()
+    scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+    outer.pack_start(scroller, True, True, 0)
+
+    content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
+    _cls(content, "content")
+    content.set_border_width(18)
+    scroller.add(content)
+
+    def make_group(title):
+        """Return (card, grid, counter) for a labelled group of rows."""
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        _cls(card, "group")
+        card.set_border_width(16)
+        _cls(head := Gtk.Label(label=title.upper(), xalign=0), "group-heading")
+        card.pack_start(head, False, False, 0)
+        g = Gtk.Grid(row_spacing=11, column_spacing=14)
+        card.pack_start(g, False, False, 0)
+        content.pack_start(card, False, False, 0)
+        return card, g, [0]
+
+    def field(grid, counter, label_text, widget):
+        """Attach a label/control row inside a group grid."""
         if label_text:
-            grid.attach(Gtk.Label(label=label_text, xalign=0), 0, row[0], 1, 1)
-        grid.attach(widget, 1 if label_text else 0, row[0],
-                    1 if label_text else 2, 1)
-        row[0] += 1
+            lbl = _cls(Gtk.Label(label=label_text, xalign=0, yalign=0.5), "field-label")
+            grid.attach(lbl, 0, counter[0], 1, 1)
+            widget.set_hexpand(True)
+            widget.set_halign(Gtk.Align.FILL)
+            grid.attach(widget, 1, counter[0], 1, 1)
+        else:
+            widget.set_hexpand(True)
+            grid.attach(widget, 0, counter[0], 2, 1)
+        counter[0] += 1
 
+    # ---- Placement -------------------------------------------------------
+    _, pg, pc = make_group("Placement")
     disp = Gdk.Display.get_default()
     n = disp.get_n_monitors()
     mon_combo = Gtk.ComboBoxText()
@@ -2223,7 +2342,7 @@ def run_settings():
         mon_combo.append(str(i), f"{i}:  {g.width}×{g.height}{prim}")
     mid = s.get("monitor", 0)
     mon_combo.set_active_id(str(mid if 0 <= mid < n else 0))
-    add_row("Monitor", mon_combo)
+    field(pg, pc, "Monitor", mon_combo)
 
     pos_combo = Gtk.ComboBoxText()
     for key, txt in (("top-left", "Top left"), ("top-right", "Top right"),
@@ -2231,33 +2350,29 @@ def run_settings():
                      ("free", "Custom (dragged)")):
         pos_combo.append(key, txt)
     pos_combo.set_active_id(s.get("position", "top-right"))
-    add_row("Position", pos_combo)
-
-    move_btn = Gtk.Button(label="Move panel on screen…")
-    add_row("", move_btn)
+    field(pg, pc, "Position", pos_combo)
 
     margin_spin = Gtk.SpinButton.new_with_range(0, 200, 1)
     margin_spin.set_value(s.get("margin", 22))
-    add_row("Edge margin (px)", margin_spin)
+    field(pg, pc, "Edge margin (px)", margin_spin)
 
-    units_combo = Gtk.ComboBoxText()
-    units_combo.append("c", "Celsius (°C)")
-    units_combo.append("f", "Fahrenheit (°F)")
-    units_combo.set_active_id(s.get("units", "c"))
-    add_row("Temperature", units_combo)
+    move_btn = _cls(Gtk.Button(label="Move panel on screen…"), "ghost")
+    field(pg, pc, "", move_btn)
 
+    # ---- Weather ---------------------------------------------------------
+    _, wg, wc = make_group("Weather")
     loc = s.get("location") or {}
     loc_state = {"data": loc or None}
     town = Gtk.Entry()
-    town.set_placeholder_text("town or city")
-    lookup = Gtk.Button(label="Look up")
-    locbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+    town.set_placeholder_text("Town or city")
+    lookup = _cls(Gtk.Button(label="Look up"), "ghost")
+    locbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
     locbox.pack_start(town, True, True, 0)
     locbox.pack_start(lookup, False, False, 0)
-    add_row("Weather", locbox)
-    loc_label = Gtk.Label(label=f"→ {loc['name']}" if loc.get("name") else "→ none (weather off)",
-                          xalign=0)
-    add_row("", loc_label)
+    field(wg, wc, "Location", locbox)
+    loc_label = _cls(Gtk.Label(label=f"→ {loc['name']}" if loc.get("name") else "→ none (weather off)",
+                               xalign=0), "result")
+    field(wg, wc, "", loc_label)
 
     def do_lookup(_b):
         q = town.get_text().strip()
@@ -2267,35 +2382,52 @@ def run_settings():
             url = "https://geocoding-api.open-meteo.com/v1/search?count=1&name=" + urllib.parse.quote(q)
             res = json.load(urllib.request.urlopen(url, timeout=8))["results"][0]
             loc_state["data"] = {"lat": res["latitude"], "lon": res["longitude"], "name": res["name"]}
+            loc_label.get_style_context().remove_class("result")
+            loc_label.get_style_context().add_class("result-ok")
             loc_label.set_text(f"→ {res['name']}, {res.get('admin1', '')} {res['country_code']}")
         except Exception:
+            loc_label.get_style_context().remove_class("result-ok")
+            loc_label.get_style_context().add_class("result")
             loc_label.set_text("→ couldn't find that place")
     lookup.connect("clicked", do_lookup)
 
-    secbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+    # ---- Panel sections --------------------------------------------------
+    _, seg, sec_ = make_group("Panel sections")
+    secgrid = Gtk.Grid(row_spacing=8, column_spacing=24)
     checks = {}
-    for key, txt in (("thermals", "Thermals"), ("network", "Network"),
-                     ("power", "Power"), ("processes", "Top processes")):
+    for idx, (key, txt) in enumerate((("thermals", "Thermals"), ("network", "Network"),
+                                      ("power", "Power"), ("processes", "Top processes"))):
         cb = Gtk.CheckButton(label=txt)
         cb.set_active(s["sections"].get(key, True))
         checks[key] = cb
-        secbox.pack_start(cb, False, False, 0)
-    add_row("Sections", secbox)
+        secgrid.attach(cb, idx % 2, idx // 2, 1, 1)
+    field(seg, sec_, "", secgrid)
 
+    # ---- Disks -----------------------------------------------------------
+    _, dg, dc = make_group("Disks")
     cur_disks = s.get("disks") or ["/"]
-    disk_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+    disk_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=7)
     disk_checks = {}
     for mp, dev in disk_mounts():
-        tag = f"  ({os.path.basename(dev)})" if dev else ""
+        tag = f"   ({os.path.basename(dev)})" if dev else ""
         cb = Gtk.CheckButton(label=f"{mp}{tag}")
         cb.set_active(mp in cur_disks)
         disk_checks[mp] = cb
         disk_box.pack_start(cb, False, False, 0)
-    add_row("Disks", disk_box)
+    field(dg, dc, "", disk_box)
+
+    # ---- Temperature -----------------------------------------------------
+    _, tg, tc = make_group("Temperature")
+    units_combo = Gtk.ComboBoxText()
+    units_combo.append("c", "Celsius (°C)")
+    units_combo.append("f", "Fahrenheit (°F)")
+    units_combo.set_active_id(s.get("units", "c"))
+    field(tg, tc, "Unit", units_combo)
 
     cur_sens = s.get("sensors") or []
     auto_paths = {p for p in (_find_cpu_temp(), _find_disk_temp(), _find_wifi_temp()) if p}
-    sens_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+    sens_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=7)
+    sens_box.set_border_width(4)
     sens_checks = {}
     sensors = list_sensors()
     for se in sensors:
@@ -2306,18 +2438,24 @@ def run_settings():
         cb.set_active(on)
         sens_checks[se["id"]] = cb
         sens_box.pack_start(cb, False, False, 0)
+    tg.attach(_cls(Gtk.Label(label="Sensors", xalign=0, yalign=0), "field-label"), 0, tc[0], 1, 1)
     if len(sensors) > 6:
-        sw = Gtk.ScrolledWindow()
+        sw = _cls(Gtk.ScrolledWindow(), "sensor-scroll")
         sw.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         sw.set_min_content_height(150)
         sw.add(sens_box)
-        add_row("Temp sensors", sw)
+        sw.set_hexpand(True)
+        tg.attach(sw, 1, tc[0], 1, 1)
     else:
-        add_row("Temp sensors", sens_box)
-    add_row("", Gtk.Label(label="up to 4 sensors are shown in the panel", xalign=0))
+        sens_box.set_hexpand(True)
+        tg.attach(sens_box, 1, tc[0], 1, 1)
+    tc[0] += 1
+    field(tg, tc, "", _cls(Gtk.Label(label="Up to 4 sensors are shown in the panel.", xalign=0), "hint"))
 
+    # ---- Devices ---------------------------------------------------------
+    _, deg, dec = make_group("Devices")
     cur_periph = s.get("peripherals") or []
-    periph_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+    periph_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=7)
     periph_checks = {}
     periphs = peripheral_batteries()
     for p in periphs:
@@ -2328,18 +2466,22 @@ def run_settings():
         periph_box.pack_start(cb, False, False, 0)
     if not periphs:
         periph_box.pack_start(
-            Gtk.Label(label="none detected (wireless mouse/keyboard batteries appear here)",
-                      xalign=0), False, False, 0)
-    add_row("Device batteries", periph_box)
+            _cls(Gtk.Label(label="No wireless mouse/keyboard batteries detected.",
+                           xalign=0), "hint"), False, False, 0)
+    field(deg, dec, "", periph_box)
 
-    status = Gtk.Label(label="", xalign=0)
-    add_row("", status)
-    btns = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-    save = Gtk.Button(label="Save")
+    # ---- Bottom action bar (fixed) --------------------------------------
+    actionbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+    _cls(actionbar, "actionbar")
+    actionbar.set_border_width(16)
+    status = _cls(Gtk.Label(label="", xalign=0), "status-ok")
+    status.set_line_wrap(True)
+    actionbar.pack_start(status, True, True, 0)
+    save = _cls(Gtk.Button(label="Save"), "accent")
     close = Gtk.Button(label="Close")
-    btns.pack_end(close, False, False, 0)
-    btns.pack_end(save, False, False, 0)
-    add_row("", btns)
+    actionbar.pack_end(save, False, False, 0)
+    actionbar.pack_end(close, False, False, 0)
+    outer.pack_start(actionbar, False, False, 0)
 
     def do_save(_b):
         new = dict(load_settings())
