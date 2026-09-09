@@ -75,7 +75,10 @@ DEFAULT_SETTINGS = {
     "left": None,                  # None -> native width anchored to the right
     "right": 22,
     "location": None,
-    "units": "c",                  # "c" or "f", for every temperature shown
+    "weather_units": "c",          # "c"/"f" for the weather slot (separate from hardware)
+    "weather_show_location": True, # show the town name on the weather slot
+    "sensor_names": {},            # {sensor id: custom label} for the thermals row
+    "units": "c",                  # "c" or "f", for hardware temperatures (per panel)
     "disks": None,                 # mount points to show; None -> just "/"
     "sensors": None,               # temp-sensor ids for thermals; None -> auto
     "peripherals": None,           # peripheral-battery ids to show; None -> none
@@ -1175,17 +1178,48 @@ def _sensor_thresholds(text):
 
 
 def _sensor_short(chip, lab):
+    """A short, human-readable name for a sensor from its hwmon chip name and
+    optional label, checked against the common Linux drivers (coretemp, k10temp,
+    nvme, amdgpu, iwlwifi, …). Falls back to the raw label/chip, trimmed."""
+    c = (chip or "").lower()
     t = (lab or "").lower()
-    c = chip.lower()
-    if "package id 0" in t or (c == "coretemp" and not lab):
+    # CPU — Intel coretemp / AMD k10temp / zenpower / SoC thermal
+    if c in ("coretemp", "cpu_thermal", "x86_pkg_temp") or "package id" in t or "x86_pkg" in t:
+        if t.startswith("core "):
+            return "CPU Core " + t.split()[-1]
         return "CPU"
-    if c == "k10temp" and t in ("tdie", "tctl", ""):
+    if c in ("k10temp", "k8temp", "zenpower"):
+        if "ccd" in t:                          # per-die temps: Tccd1 -> CPU CCD1
+            return "CPU " + (lab or "").upper()
         return "CPU"
-    if c == "nvme" and t == "composite":
-        return "SSD"
-    if c.startswith(("iwlwifi", "ath", "mt79", "rtw", "mwifiex", "brcm")):
-        return "WIFI"
-    return (lab or chip)[:10]
+    if "tctl" in t or "tdie" in t or t == "cpu":
+        return "CPU"
+    # Storage
+    if c == "nvme":
+        return "SSD" + (f" {lab}" if t and t != "composite" else "")
+    if c == "drivetemp" or "drive" in t or "disk" in t:
+        return "Disk"
+    # GPU — AMD / NVIDIA
+    if c in ("amdgpu", "radeon"):
+        if "junction" in t:
+            return "GPU Junction"
+        if "mem" in t:
+            return "GPU Memory"
+        return "GPU"
+    if c in ("nouveau", "nvidia"):
+        return "GPU"
+    # Wi-Fi radios
+    if c.startswith(("iwlwifi", "ath", "mt79", "mt76", "rtw", "mwifiex", "brcm")) \
+            or "wifi" in t or "wlan" in t:
+        return "WiFi"
+    # Board / chipset / ACPI
+    if c == "acpitz" or "acpi" in c:
+        return "System"
+    if "pch" in c:
+        return "Chipset"
+    if c.startswith(("nct6", "it87", "it8", "f718", "w836", "nzxt")):
+        return (lab or chip)[:12]               # super-I/O: keep its own label
+    return (lab or chip)[:12]
 
 
 def list_sensors():
@@ -1202,15 +1236,19 @@ def list_sensors():
             base = os.path.basename(inp).replace("_input", "")
             lab = labels.get(inp, "")
             warn, crit = _sensor_thresholds(f"{chip} {lab or base}")
-            out.append({"id": f"{chip}:{base}", "label": _sensor_short(chip, lab),
-                        "full": f"{chip} · {lab}" if lab else chip,
+            short = _sensor_short(chip, lab)
+            tech = f"{chip} · {lab}" if lab else chip
+            out.append({"id": f"{chip}:{base}", "label": short,
+                        "full": f"{short}  ({tech})" if short.lower() != tech.lower() else tech,
                         "path": inp, "warn": warn, "crit": crit})
     for z in sorted(glob.glob("/sys/class/thermal/thermal_zone*")):
         ty = read_first(f"{z}/type", default="")
         p = f"{z}/temp"
         if ty and os.path.exists(p):
             warn, crit = _sensor_thresholds(ty)
-            out.append({"id": f"zone:{ty}", "label": ty[:10], "full": f"zone · {ty}",
+            short = _sensor_short(ty, "")
+            out.append({"id": f"zone:{ty}", "label": short,
+                        "full": f"{short}  (zone · {ty})" if short.lower() != ty.lower() else f"zone · {ty}",
                         "path": p, "warn": warn, "crit": crit})
     return out
 
@@ -1773,6 +1811,9 @@ def render(frame=None, cfg=None, target_h=None, flex_in=0.0, write_png=False):
     cfg = cfg or {}
     SECTIONS = cfg.get("sections") or _s.get("sections")
     UNITS = cfg.get("units") or _s.get("units", "c")
+    WEATHER_UNITS = _s.get("weather_units", "c")          # separate from hardware temps
+    SHOW_LOC = _s.get("weather_show_location", True)
+    SENSOR_NAMES = _s.get("sensor_names") or {}
     disks_sel = cfg.get("disks", _s.get("disks"))
     sensors_sel = cfg.get("sensors", _s.get("sensors"))
     periph_sel_cfg = cfg.get("peripherals", _s.get("peripherals"))
@@ -1821,12 +1862,12 @@ def render(frame=None, cfg=None, target_h=None, flex_in=0.0, write_png=False):
 
     def draw_weather(y0):
         label(d, PAD, y0, "weather", ACCENT, tracking=2.4)
-        if weather.get("name"):
+        if SHOW_LOC and weather.get("name"):
             label_r(d, R, y0, weather["name"], TEXT, size=T_MICRO)
         t = weather["temp"]
         f_temp = F(MONO_LIGHT, T_HERO)
         icon_s = 22
-        ttxt = temp_str(t, UNITS)
+        ttxt = temp_str(t, WEATHER_UNITS)
         tw = measure(f_temp, ttxt) / SS
         iw = icon_s * 2.5
         gap_it = 14
@@ -1842,7 +1883,7 @@ def render(frame=None, cfg=None, target_h=None, flex_in=0.0, write_png=False):
                  ("feels", weather['feels']))
         colw = CW / 3.0
         for i, (lab, tval) in enumerate(cells):
-            val = temp_str(tval, UNITS)
+            val = temp_str(tval, WEATHER_UNITS)
             vcol = weather_temp_color(tval)
             cx = PAD + colw * (i + 0.5)
             lw = measure(f_dl, lab.upper(), 1.4) / SS
@@ -1947,7 +1988,8 @@ def render(frame=None, cfg=None, target_h=None, flex_in=0.0, write_png=False):
         if sel:
             by_id = {s["id"]: s for s in list_sensors()}
             chosen = [by_id[i] for i in sel if i in by_id][:4]
-            therms = [(s["label"].lower(), read_sensor(s["path"]), s["warn"], s["crit"])
+            therms = [((SENSOR_NAMES.get(s["id"]) or s["label"]).lower(),
+                       read_sensor(s["path"]), s["warn"], s["crit"])
                       for s in chosen]
         else:
             therms = (("cpu", cpu_t, 80, 95), ("ssd", nvme_t, 65, 75),
@@ -3057,6 +3099,20 @@ def run_settings():
     loc_label.set_no_show_all(True)             # only appears to report a lookup
     field(wg, wc, "", loc_label)
 
+    # Weather has its own °C/°F, separate from the hardware temperatures below,
+    # and the location name can be hidden.
+    wunit_combo = _noscroll(Gtk.ComboBoxText())
+    wunit_combo.append("c", "Celsius (°C)")
+    wunit_combo.append("f", "Fahrenheit (°F)")
+    wunit_combo.set_active_id(s.get("weather_units", "c"))
+    wunit_combo.set_hexpand(False)
+    wunit_combo.set_halign(Gtk.Align.START)
+    wunit_combo.set_size_request(190, -1)
+    field(wg, wc, "Weather unit", wunit_combo)
+    showloc_chk = Gtk.CheckButton(label="Show location name")
+    showloc_chk.set_active(bool(s.get("weather_show_location", True)))
+    field(wg, wc, "", showloc_chk)
+
     def do_lookup(_b):
         q = town.get_text().strip()
         if not q:
@@ -3221,6 +3277,48 @@ def run_settings():
     tc[0] += 1
     field(tg, tc, "", _cls(Gtk.Label(label="Up to 4 sensors are shown in the panel.", xalign=0), "hint"))
 
+    # Custom display names for the chosen sensors, rebuilt as the selection (or
+    # the edited panel) changes. Names are shared across panels — a sensor is
+    # the same sensor everywhere; the placeholder is the auto-detected name.
+    sensor_names_state = dict(s.get("sensor_names") or {})
+    _sensmap = {se["id"]: se for se in sensors}
+    names_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+
+    def rebuild_sensor_names():
+        for c in names_box.get_children():
+            names_box.remove(c)
+        sel = [sid for sid, cb in sens_checks.items() if cb.get_active()][:4]
+        if not sel:
+            names_box.pack_start(
+                _cls(Gtk.Label(label="Tick sensors above to give them panel names.",
+                               xalign=0), "hint"), False, False, 0)
+        for sid in sel:
+            se = _sensmap.get(sid)
+            if not se:
+                continue
+            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            lab = _cls(Gtk.Label(label=se["label"], xalign=0), "hint")
+            lab.set_size_request(120, -1)
+            row.pack_start(lab, False, False, 0)
+            ent = Gtk.Entry()
+            ent.set_placeholder_text(se["label"])
+            ent.set_text(sensor_names_state.get(sid, ""))
+
+            def _on_name(e, sid=sid):
+                if _loading[0]:
+                    return
+                sensor_names_state[sid] = e.get_text()
+                commit()
+            ent.connect("changed", _on_name)
+            row.pack_start(ent, True, True, 0)
+            names_box.pack_start(row, False, False, 0)
+        names_box.show_all()
+
+    tg.attach(_cls(Gtk.Label(label="Names", xalign=0, yalign=0), "field-label"), 0, tc[0], 1, 1)
+    names_box.set_hexpand(True)
+    tg.attach(names_box, 1, tc[0], 1, 1)
+    tc[0] += 1
+
     # ---- Devices ---------------------------------------------------------
     _, deg, dec = make_group("Devices")
     cur_periph = _P0.get("peripherals") or []
@@ -3254,10 +3352,14 @@ def run_settings():
         if _loading[0]:                      # ignore the signals load_panel() fires
             return
         new = dict(load_settings())
-        new["location"] = loc_state["data"]  # the weather location stays shared
+        # Shared (not per-panel): weather location + unit, and sensor names.
+        new["location"] = loc_state["data"]
+        new["weather_units"] = wunit_combo.get_active_id() or "c"
+        new["weather_show_location"] = showloc_chk.get_active()
+        new["sensor_names"] = {k: v.strip() for k, v in sensor_names_state.items() if v.strip()}
         cfgs = [dict(c) for c in (new.get("panels") or [{}])]
         while len(cfgs) <= editing[0]:
-            cfgs.append({"monitor": 0, "position": "top-right", "offset": None})
+            cfgs.append({"monitor": 0})
         pcfg = dict(cfgs[editing[0]])
         for _k, _sp in margin_spins.items():
             pcfg[_k] = int(_sp.get_value())
@@ -3300,11 +3402,14 @@ def run_settings():
                 cb.set_active(pid in psel)
             full_order[:] = normalize_order(pcfg.get("order"))
             _rebuild_order_rows()
+            rebuild_sensor_names()
         finally:
             _loading[0] = False
 
     # every control applies itself immediately — no Save button
     units_combo.connect("changed", commit)
+    wunit_combo.connect("changed", commit)
+    showloc_chk.connect("toggled", commit)
 
     def _on_section_toggle(*_):
         if _loading[0]:
@@ -3313,8 +3418,15 @@ def run_settings():
         commit()
     for _cb in checks.values():
         _cb.connect("toggled", _on_section_toggle)
-    for _cb in (list(disk_checks.values())
-                + list(sens_checks.values()) + list(periph_checks.values())):
+
+    def _on_sensor_toggle(*_):
+        if _loading[0]:
+            return
+        rebuild_sensor_names()      # add/remove this sensor's name field
+        commit()
+    for _cb in sens_checks.values():
+        _cb.connect("toggled", _on_sensor_toggle)
+    for _cb in (list(disk_checks.values()) + list(periph_checks.values())):
         _cb.connect("toggled", commit)
     for _sp in margin_spins.values():
         _sp.connect("value-changed", commit)
@@ -3322,6 +3434,7 @@ def run_settings():
 
     _refill_combo()
     refresh_move_labels()
+    rebuild_sensor_names()
 
     win.connect("destroy", Gtk.main_quit)
     win.show_all()
