@@ -43,6 +43,7 @@ DEFAULT_SETTINGS = {
     "units": "c",                  # "c" or "f", for every temperature shown
     "disks": None,                 # mount points to show; None -> just "/"
     "sensors": None,               # temp-sensor ids for thermals; None -> auto
+    "peripherals": None,           # peripheral-battery ids to show; None -> none
     "sections": {"thermals": True, "network": True, "power": True, "processes": True},
 }
 
@@ -728,6 +729,27 @@ def battery_path():
             pass
         return None
     return _detect("battery", find)
+
+
+def peripheral_batteries():
+    """Wireless mouse/keyboard/etc. batteries (power_supply type Battery with
+    scope=Device — the ones battery_path skips). Read fresh so a device turning
+    on or off shows up. Returns [{id, name, capacity, status}]."""
+    out = []
+    try:
+        for name in sorted(os.listdir(PSUPPLY)):
+            d = f"{PSUPPLY}/{name}"
+            if read_first(f"{d}/type", default="") != "Battery":
+                continue
+            if read_first(f"{d}/scope", default="") != "Device":
+                continue
+            out.append({"id": name,
+                        "name": read_first(f"{d}/model_name", default="") or name,
+                        "capacity": read_first(f"{d}/capacity", int),
+                        "status": read_first(f"{d}/status", default="")})
+    except OSError:
+        pass
+    return out
 
 
 def read_first(path, cast=str, default=None):
@@ -1824,6 +1846,24 @@ def render(write_png=True):
         y += 18
         y += gap(10)
 
+    # ============ DEVICES (peripheral batteries) =================
+    periph_sel = _s.get("peripherals") or []
+    if periph_sel:
+        devs = [p for p in peripheral_batteries()
+                if p["id"] in periph_sel and p["capacity"] is not None]
+        if devs:
+            label(d, PAD, y, "devices", VIOLET)
+            y += 18
+            for p in devs:
+                cap = p["capacity"]
+                col = GREEN if p["status"] == "Charging" else ramp_rgb(1 - cap / 100)
+                text(d, PAD, y - 2, p["name"][:26], F(UI_MED, T_BODY), TEXT)
+                text(d, R, y - 2, f"{cap}%", f_val, col, anchor="r")
+                y += 15
+                bar(img, PAD, y, CW, 5, cap / 100, col)
+                y += 13
+            y += gap(20)
+
     def proc_list(y, title, hue, rows, value_of, fmt_of, colour_of,
                   right=None, total=None, curve=1.0):
         """total: denominator for the bars. Given one, a bar shows the share of
@@ -2276,6 +2316,22 @@ def run_settings():
         add_row("Temp sensors", sens_box)
     add_row("", Gtk.Label(label="up to 4 sensors are shown in the panel", xalign=0))
 
+    cur_periph = s.get("peripherals") or []
+    periph_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+    periph_checks = {}
+    periphs = peripheral_batteries()
+    for p in periphs:
+        cap = p["capacity"]
+        cb = Gtk.CheckButton(label=f"{p['name']}" + (f"   {cap}%" if cap is not None else ""))
+        cb.set_active(p["id"] in cur_periph)
+        periph_checks[p["id"]] = cb
+        periph_box.pack_start(cb, False, False, 0)
+    if not periphs:
+        periph_box.pack_start(
+            Gtk.Label(label="none detected (wireless mouse/keyboard batteries appear here)",
+                      xalign=0), False, False, 0)
+    add_row("Device batteries", periph_box)
+
     status = Gtk.Label(label="", xalign=0)
     add_row("", status)
     btns = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
@@ -2297,6 +2353,8 @@ def run_settings():
         new["disks"] = dsel or None
         ssel = [sid for sid, cb in sens_checks.items() if cb.get_active()]
         new["sensors"] = ssel or None
+        psel = [pid for pid, cb in periph_checks.items() if cb.get_active()]
+        new["peripherals"] = psel or None
         save_settings(new)
         status.set_text("Saved — the panel updates within a second.")
     save.connect("clicked", do_save)
