@@ -1836,8 +1836,14 @@ def run_window(interval=2.0):
         margin = s.get("margin", MARGIN)
         pos = s.get("position", "top-right")
         TARGET_H = max(200, wa.height - 2 * margin)
-        x = wa.x + (wa.width - W - margin if pos.endswith("right") else margin)
-        yy = wa.y + (wa.height - h - margin if pos.startswith("bottom") else margin)
+        off = s.get("offset")
+        if pos == "free" and isinstance(off, (list, tuple)) and len(off) == 2:
+            x, yy = wa.x + int(off[0]), wa.y + int(off[1])
+        else:
+            x = wa.x + (wa.width - W - margin if pos.endswith("right") else margin)
+            yy = wa.y + (wa.height - h - margin if pos.startswith("bottom") else margin)
+        x = max(wa.x, min(x, wa.x + wa.width - W))
+        yy = max(wa.y, min(yy, wa.y + wa.height - h))
         win.set_size_request(W, h)
         win.move(x, yy)
 
@@ -1846,10 +1852,81 @@ def run_window(interval=2.0):
             cr.set_operator(cairo.OPERATOR_SOURCE)
             cr.set_source_surface(state["surface"], 0, 0)
             cr.paint()
+        if state.get("moving"):
+            cr.set_operator(cairo.OPERATOR_OVER)
+            cr.set_source_rgba(0.23, 0.51, 0.96, 0.95)
+            cr.rectangle(0, 0, win.get_allocated_width(), 26)
+            cr.fill()
+            cr.set_source_rgba(1, 1, 1, 1)
+            cr.select_font_face("sans")
+            cr.set_font_size(12)
+            cr.move_to(12, 17)
+            cr.show_text("drag to move — release to place")
         return False
 
     def on_realize(_w):
         win.get_window().input_shape_combine_region(cairo.Region(), 0, 0)
+
+    drag = {"active": False, "sx": 0, "sy": 0, "wx": 0, "wy": 0}
+
+    def enter_move():
+        gw = win.get_window()
+        if gw is None:
+            return
+        gw.input_shape_combine_region(None, 0, 0)      # accept the pointer again
+        win.set_keep_below(False)
+        win.set_keep_above(True)
+        state["moving"] = True
+        win.queue_draw()
+
+    def exit_move():
+        gw = win.get_window()
+        if gw is not None:
+            gw.input_shape_combine_region(cairo.Region(), 0, 0)   # click-through
+        win.set_keep_above(False)
+        win.set_keep_below(True)
+        state["moving"] = False
+        win.queue_draw()
+
+    def on_press(_w, ev):
+        if not state.get("moving"):
+            return False
+        drag["active"] = True
+        drag["sx"], drag["sy"] = ev.x_root, ev.y_root
+        drag["wx"], drag["wy"] = win.get_position()
+        return True
+
+    def on_motion(_w, ev):
+        if state.get("moving") and drag["active"]:
+            win.move(int(drag["wx"] + (ev.x_root - drag["sx"])),
+                     int(drag["wy"] + (ev.y_root - drag["sy"])))
+        return False
+
+    def on_release(_w, ev):
+        if not state.get("moving"):
+            return False
+        drag["active"] = False
+        wx, wy = win.get_position()
+        disp = Gdk.Display.get_default()
+        cx, cy = wx + W // 2, wy + (state["h"] or 0) // 2
+        mon = disp.get_monitor_at_point(cx, cy) or disp.get_primary_monitor()
+        wa = mon.get_workarea()
+        mg = mon.get_geometry()
+        idx = 0
+        for i in range(disp.get_n_monitors()):
+            g = disp.get_monitor(i).get_geometry()
+            if (g.x, g.y, g.width, g.height) == (mg.x, mg.y, mg.width, mg.height):
+                idx = i
+                break
+        s = dict(load_settings())
+        s["monitor"] = idx
+        s["position"] = "free"
+        s["offset"] = [wx - wa.x, wy - wa.y]
+        s["move"] = False
+        save_settings(s)
+        state["placekey"] = None
+        exit_move()
+        return True
 
     def keep_above_desktop():
         """A DESKTOP-type window shares the bottom layer with nemo-desktop, and
@@ -1877,13 +1954,19 @@ def run_window(interval=2.0):
         try:
             img = render(write_png=False)
             state["surface"], state["buf"] = surface_from(img)
+            state["h"] = img.height
             s = load_settings()
-            key = (img.height, s.get("monitor"), s.get("position"), s.get("margin"))
-            if key != state.get("placekey"):
-                state["placekey"] = key
-                state["h"] = img.height
-                place(img.height)
-            keep_above_desktop()
+            if s.get("move") and not state.get("moving"):
+                enter_move()
+            elif not s.get("move") and state.get("moving"):
+                exit_move()
+            if not state.get("moving"):
+                key = (img.height, s.get("monitor"), s.get("position"),
+                       s.get("margin"), tuple(s.get("offset") or ()))
+                if key != state.get("placekey"):
+                    state["placekey"] = key
+                    place(img.height)
+                keep_above_desktop()
             win.queue_draw()
             state["fails"] = 0
         except Exception:
@@ -1894,8 +1977,13 @@ def run_window(interval=2.0):
                     log("further identical failures will not be logged")
         return True
 
+    win.add_events(Gdk.EventMask.BUTTON_PRESS_MASK | Gdk.EventMask.BUTTON_RELEASE_MASK
+                   | Gdk.EventMask.POINTER_MOTION_MASK | Gdk.EventMask.BUTTON1_MOTION_MASK)
     win.connect("draw", on_draw)
     win.connect("realize", on_realize)
+    win.connect("button-press-event", on_press)
+    win.connect("motion-notify-event", on_motion)
+    win.connect("button-release-event", on_release)
     win.connect("destroy", Gtk.main_quit)
     tick()
     place(state["h"] or 900)
@@ -1914,6 +2002,24 @@ def run_settings():
     from gi.repository import Gtk, Gdk
     import urllib.parse
     import urllib.request
+
+    Gtk.Settings.get_default().set_property("gtk-application-prefer-dark-theme", True)
+    css = b"""
+    window { background-color: #16181c; }
+    label { color: #cfd6e0; }
+    entry, spinbutton, spinbutton entry, combobox button, button {
+        background-image: none; background-color: #23262c; color: #e9eef5;
+        border: 1px solid #333a44; border-radius: 6px;
+    }
+    button:hover { background-color: #2c313a; }
+    checkbutton { color: #cfd6e0; }
+    .accent, .accent:hover { background-color: #3b82f6; color: #ffffff; border-color: #3b82f6; }
+    .hint { color: #8a94a4; font-size: 11px; }
+    """
+    prov = Gtk.CssProvider()
+    prov.load_from_data(css)
+    Gtk.StyleContext.add_provider_for_screen(
+        Gdk.Screen.get_default(), prov, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 
     s = load_settings()
     win = Gtk.Window(title="Linux Mint HUD — Settings")
@@ -1942,10 +2048,14 @@ def run_settings():
 
     pos_combo = Gtk.ComboBoxText()
     for key, txt in (("top-left", "Top left"), ("top-right", "Top right"),
-                     ("bottom-left", "Bottom left"), ("bottom-right", "Bottom right")):
+                     ("bottom-left", "Bottom left"), ("bottom-right", "Bottom right"),
+                     ("free", "Custom (dragged)")):
         pos_combo.append(key, txt)
     pos_combo.set_active_id(s.get("position", "top-right"))
     add_row("Position", pos_combo)
+
+    move_btn = Gtk.Button(label="Move panel on screen…")
+    add_row("", move_btn)
 
     margin_spin = Gtk.SpinButton.new_with_range(0, 200, 1)
     margin_spin.set_value(s.get("margin", 22))
@@ -2006,7 +2116,16 @@ def run_settings():
         save_settings(new)
         status.set_text("Saved — the panel updates within a second.")
     save.connect("clicked", do_save)
+    save.get_style_context().add_class("accent")
     close.connect("clicked", lambda *_: win.close())
+
+    def do_move(_b):
+        m = dict(load_settings())
+        m["move"] = True
+        save_settings(m)
+        pos_combo.set_active_id("free")
+        status.set_text("Drag the panel on your desktop, then release to drop it there.")
+    move_btn.connect("clicked", do_move)
 
     win.connect("destroy", Gtk.main_quit)
     win.show_all()
