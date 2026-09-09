@@ -2440,39 +2440,31 @@ def run_window(interval=2.0):
         return x, y
 
     def scaled_for(pw, cfg):
-        """The frame is rendered natively at the panel's box width, so at rest
-        this returns it unchanged (crisp, no scaling — width and height are both
-        the user's, set independently). It only rescales for the live grip
-        preview (the frame is re-rendered at the new width on release) and as an
-        off-screen guard so a panel can't run past the bottom of its monitor."""
+        """The frame is rendered natively at the panel's box width and height, so
+        this returns it unchanged — width and height are both the user's, set
+        independently, and no scaling is done at rest. The only guard keeps a
+        panel from running past the bottom of its monitor (content that can't
+        compress far enough)."""
         img = pw["state"].get("img")
         if img is None:
             return None
         wa = monitor_of(cfg).get_workarea()
         x, y, bw, bh, m = eff_margins(pw, cfg, wa)
         maxh = wa.height - m["top"] - 2
-        if pw["state"].get("resizing"):
-            # Live feedback: one cheap uniform rescale of the current frame to
-            # the live box width (re-rendered crisply on release).
-            k = bw / img.width
-            w, h = max(120, round(img.width * k)), max(80, round(img.height * k))
-            if h > maxh > 0:
-                k2 = maxh / h
-                w, h = max(120, round(w * k2)), max(80, round(h * k2))
-            return img.resize((w, h), Image.BILINEAR)
         if img.height > maxh > 0:                 # off-screen guard only
             k = maxh / img.height
             return img.resize((max(120, round(img.width * k)), maxh), Image.LANCZOS)
         return img
 
     def paint(pw, cfg):
-        """Rebuild a panel's surface from its own current frame at its scale."""
+        """Rebuild a panel's surface from its own current native frame."""
         dimg = scaled_for(pw, cfg)
         if dimg is None:
             return None
         st = pw["state"]
         st["surface"], st["buf"] = surface_from(dimg)
-        st["w"], st["h"] = dimg.width, dimg.height
+        st["natw"], st["nath"] = dimg.width, dimg.height   # true surface size
+        st["w"], st["h"] = dimg.width, dimg.height          # window size (== surface at rest)
         return dimg
 
     def setup(pw):
@@ -2480,9 +2472,21 @@ def run_window(interval=2.0):
 
         def on_draw(_w, cr):
             if st["surface"] is not None:
+                aw, ah = win.get_allocated_width(), win.get_allocated_height()
+                nw, nh = st.get("natw") or aw, st.get("nath") or ah
                 cr.set_operator(cairo.OPERATOR_SOURCE)
-                cr.set_source_surface(st["surface"], 0, 0)
-                cr.paint()
+                if nw and nh and (aw != nw or ah != nh):
+                    # Window is a different size than the rendered frame (a live
+                    # grip resize): let cairo scale the surface — cheap, unlike a
+                    # per-motion Pillow resize. Re-rendered crisply on release.
+                    cr.save()
+                    cr.scale(aw / nw, ah / nh)
+                    cr.set_source_surface(st["surface"], 0, 0)
+                    cr.paint()
+                    cr.restore()
+                else:
+                    cr.set_source_surface(st["surface"], 0, 0)
+                    cr.paint()
             if st.get("moving"):
                 draw_banner(cr, win)
                 w, h = win.get_allocated_width(), win.get_allocated_height()
@@ -2572,14 +2576,16 @@ def run_window(interval=2.0):
                 live_box[0] = {"idx": pw["idx"],
                                "margins": {**m0, "right": new_right, "bottom": new_bottom}}
                 st["resizing"] = True
-                cfg = _cfg_of()
-                dimg = paint(pw, cfg)          # one cheap rescale, no re-render
-                if dimg is not None:
-                    place(pw, cfg, dimg.width, dimg.height)
-                    gw = win.get_window()
-                    if gw is not None:          # keep the grown area clickable
-                        gw.input_shape_combine_region(
-                            cairo.Region(cairo.RectangleInt(0, 0, dimg.width, dimg.height)), 0, 0)
+                # No re-render and no Pillow rescale per motion: just resize the
+                # window to the preview size and let on_draw scale the existing
+                # surface with cairo (fast). Re-rendered crisply on release.
+                pw_w, pw_h = int(new_sw), int(new_sh)
+                st["w"], st["h"] = pw_w, pw_h
+                win.set_size_request(pw_w, pw_h)
+                gw = win.get_window()
+                if gw is not None:              # keep the whole grip area clickable
+                    gw.input_shape_combine_region(
+                        cairo.Region(cairo.RectangleInt(0, 0, pw_w, pw_h)), 0, 0)
                 win.queue_draw()
             else:
                 nx = int(drag["wx"] + (ev.x_root - drag["sx"]))
