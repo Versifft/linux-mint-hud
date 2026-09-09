@@ -208,3 +208,7 @@ pkill -f "hud[.]py$"             # stop it
 Note the `[.]` in that pattern — plain `hud.py` also matches the shell you type
 it in, and `pkill -f` will happily kill your own terminal. Failures land in
 `cache/hud.log`.
+
+## License
+
+MIT — use it, change it, ship it, no warranty. See [LICENSE](LICENSE).
