@@ -36,7 +36,9 @@ SETTINGS_FILE = os.path.join(CONF_DIR, "settings.json")
 WEATHER_FILE = os.path.join(CONF_DIR, "weather.json")
 
 DEFAULT_SETTINGS = {
-    "monitor": 0,
+    "panels": None,                # list of {monitor, position, offset}; None -> one
+    "move": None,                  # index of the panel being placed by hand, or None
+    "monitor": 0,                  # legacy single-panel keys (migrated into panels)
     "position": "top-right",
     "margin": 22,
     "location": None,
@@ -1355,6 +1357,12 @@ def load_settings():
         if isinstance(data.get("sections"), dict):
             sec.update(data["sections"])
         s["sections"] = sec
+        # placement moved from single monitor/position/offset keys to a list of
+        # panels; migrate the old ones into panel 0 so nothing is lost.
+        if not s.get("panels"):
+            s["panels"] = [{"monitor": s.get("monitor", 0),
+                            "position": s.get("position", "top-right"),
+                            "offset": s.get("offset")}]
         _SETTINGS, _SETTINGS_MTIME = s, m
     return _SETTINGS
 
@@ -1968,155 +1976,88 @@ def surface_from(img):
 
 
 def run_window(interval=2.0):
-    """Put the panel on the desktop and keep it painted.
+    """Paint the panel(s) onto the desktop and keep them updated.
 
-    A top-level ARGB window with four properties on it, redrawn on a timer.
-    Handing cairo the pixels costs 4ms a frame against 21ms to encode a PNG
-    first, so nothing here touches the disk."""
+    One or two click-through ARGB desktop windows (from settings["panels"]),
+    all showing the same rendered frame, each on its own monitor and spot. A
+    panel is repositioned by hand: the settings Move button sets
+    settings["move"] to a panel index, that window takes the pointer, and
+    releasing the drag saves its monitor and offset."""
     import gi
     gi.require_version("Gtk", "3.0")
     from gi.repository import Gtk, Gdk, GLib
     import cairo
+    import math
 
-    win = Gtk.Window(type=Gtk.WindowType.TOPLEVEL)
-    win.set_app_paintable(True)
-    win.set_decorated(False)
-    win.set_resizable(False)
-    win.set_type_hint(Gdk.WindowTypeHint.DESKTOP)
-    win.set_skip_taskbar_hint(True)
-    win.set_skip_pager_hint(True)
-    win.set_keep_below(True)
-    win.set_accept_focus(False)
-    win.set_focus_on_map(False)
-    win.stick()
-    win.set_title("linux-mint-hud")
-
-    visual = win.get_screen().get_rgba_visual()
-    if visual is None:
-        log("no RGBA visual; the panel will not be translucent")
-    else:
-        win.set_visual(visual)
-
-    state = {"surface": None, "buf": None, "h": 0, "fails": 0}
-
-    def place(h):
-        """Put the panel in the configured corner of the configured monitor,
-        measured off the work area so the taskbar is respected, and size the
-        flex target to that monitor's height."""
-        global TARGET_H
-        s = load_settings()
-        disp = Gdk.Display.get_default()
-        mon = (disp.get_monitor(s.get("monitor", 0))
-               or disp.get_primary_monitor() or disp.get_monitor(0))
-        wa = mon.get_workarea()
-        margin = s.get("margin", MARGIN)
-        pos = s.get("position", "top-right")
-        TARGET_H = max(200, wa.height - 2 * margin)
-        off = s.get("offset")
-        if pos == "free" and isinstance(off, (list, tuple)) and len(off) == 2:
-            x, yy = wa.x + int(off[0]), wa.y + int(off[1])
-        else:
-            x = wa.x + (wa.width - W - margin if pos.endswith("right") else margin)
-            yy = wa.y + (wa.height - h - margin if pos.startswith("bottom") else margin)
-        x = max(wa.x, min(x, wa.x + wa.width - W))
-        yy = max(wa.y, min(yy, wa.y + wa.height - h))
-        win.set_size_request(W, h)
-        win.move(x, yy)
-
-    def on_draw(_w, cr):
-        if state["surface"] is not None:
-            cr.set_operator(cairo.OPERATOR_SOURCE)
-            cr.set_source_surface(state["surface"], 0, 0)
-            cr.paint()
-        if state.get("moving"):
-            cr.set_operator(cairo.OPERATOR_OVER)
-            cr.set_source_rgba(0.23, 0.51, 0.96, 0.95)
-            cr.rectangle(0, 0, win.get_allocated_width(), 26)
-            cr.fill()
-            cr.set_source_rgba(1, 1, 1, 1)
-            cr.select_font_face("sans")
-            cr.set_font_size(12)
-            cr.move_to(12, 17)
-            cr.show_text("drag to move — release to place")
-        return False
-
-    def on_realize(_w):
-        win.get_window().input_shape_combine_region(cairo.Region(), 0, 0)
-
-    drag = {"active": False, "sx": 0, "sy": 0, "wx": 0, "wy": 0}
-
-    def enter_move():
-        gw = win.get_window()
-        if gw is None:
-            return
-        w = win.get_allocated_width() or W
-        h = win.get_allocated_height() or state.get("h") or 1000
-        gw.input_shape_combine_region(          # whole window accepts the pointer
-            cairo.Region(cairo.RectangleInt(0, 0, w, h)), 0, 0)
-        win.set_keep_below(False)
-        win.set_keep_above(True)
-        state["moving"] = True
-        win.queue_draw()
-
-    def exit_move():
-        gw = win.get_window()
-        if gw is not None:
-            gw.input_shape_combine_region(cairo.Region(), 0, 0)   # click-through
-        win.set_keep_above(False)
+    def make_window():
+        win = Gtk.Window(type=Gtk.WindowType.TOPLEVEL)
+        win.set_app_paintable(True)
+        win.set_decorated(False)
+        win.set_resizable(False)
+        win.set_type_hint(Gdk.WindowTypeHint.DESKTOP)
+        win.set_skip_taskbar_hint(True)
+        win.set_skip_pager_hint(True)
         win.set_keep_below(True)
-        state["moving"] = False
-        win.queue_draw()
+        win.set_accept_focus(False)
+        win.set_focus_on_map(False)
+        win.stick()
+        win.set_title("linux-mint-hud")
+        vis = win.get_screen().get_rgba_visual()
+        if vis is not None:
+            win.set_visual(vis)
+        return win
 
-    def on_press(_w, ev):
-        if not state.get("moving"):
-            return False
-        drag["active"] = True
-        drag["sx"], drag["sy"] = ev.x_root, ev.y_root
-        drag["wx"], drag["wy"] = win.get_position()
-        return True
-
-    def on_motion(_w, ev):
-        if state.get("moving") and drag["active"]:
-            win.move(int(drag["wx"] + (ev.x_root - drag["sx"])),
-                     int(drag["wy"] + (ev.y_root - drag["sy"])))
-        return False
-
-    def on_release(_w, ev):
-        if not state.get("moving"):
-            return False
-        drag["active"] = False
-        wx, wy = win.get_position()
-        disp = Gdk.Display.get_default()
-        cx, cy = wx + W // 2, wy + (state["h"] or 0) // 2
-        mon = disp.get_monitor_at_point(cx, cy) or disp.get_primary_monitor()
-        wa = mon.get_workarea()
+    def mon_index(disp, mon):
         mg = mon.get_geometry()
-        idx = 0
         for i in range(disp.get_n_monitors()):
             g = disp.get_monitor(i).get_geometry()
             if (g.x, g.y, g.width, g.height) == (mg.x, mg.y, mg.width, mg.height):
-                idx = i
-                break
-        s = dict(load_settings())
-        s["monitor"] = idx
-        s["position"] = "free"
-        s["offset"] = [wx - wa.x, wy - wa.y]
-        s["move"] = False
-        save_settings(s)
-        state["placekey"] = None
-        exit_move()
-        return True
+                return i
+        return 0
 
-    def keep_above_desktop():
-        """A DESKTOP-type window shares the bottom layer with nemo-desktop, and
-        their order inside it is not fixed: a Cinnamon restart left the panel
-        underneath a 1920x1160 desktop window, still mapped and completely
-        invisible. Landing at the very bottom of the stack is the signature of
-        that, and re-mapping lifts us back to the top of the layer.
+    def draw_banner(cr, win):
+        w = win.get_allocated_width()
+        txt = "drag to place"
+        cr.select_font_face("sans", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
+        cr.set_font_size(12.5)
+        tw = cr.text_extents(txt).width
+        pw, ph, py = tw + 62, 30, 12
+        px = (w - pw) / 2
+        rad = ph / 2
 
-        Not solvable by raise_(), which Muffin ignores for this window type,
-        nor by dropping the type hint: a NORMAL window is then swept away by
-        "show desktop" along with the real applications."""
+        def rrect(x, y, ww, hh, r):
+            cr.new_sub_path()
+            cr.arc(x + ww - r, y + r, r, -math.pi / 2, 0)
+            cr.arc(x + ww - r, y + hh - r, r, 0, math.pi / 2)
+            cr.arc(x + r, y + hh - r, r, math.pi / 2, math.pi)
+            cr.arc(x + r, y + r, r, math.pi, 3 * math.pi / 2)
+            cr.close_path()
+
+        cr.set_operator(cairo.OPERATOR_OVER)
+        cr.set_source_rgba(0, 0, 0, 0.30)
+        rrect(px, py + 2, pw, ph, rad)
+        cr.fill()
+        cr.set_source_rgba(0.23, 0.51, 0.96, 0.97)
+        rrect(px, py, pw, ph, rad)
+        cr.fill()
+        gx, gy, a, hd = px + 22, py + ph / 2, 7, 3.0
+        cr.set_source_rgba(1, 1, 1, 1)
+        cr.set_line_width(1.7)
+        cr.set_line_cap(cairo.LINE_CAP_ROUND)
+        for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            tx, ty = gx + dx * a, gy + dy * a
+            perpx, perpy = -dy, dx
+            cr.move_to(gx, gy)
+            cr.line_to(tx, ty)
+            cr.move_to(tx, ty)
+            cr.line_to(tx - dx * hd + perpx * hd, ty - dy * hd + perpy * hd)
+            cr.move_to(tx, ty)
+            cr.line_to(tx - dx * hd - perpx * hd, ty - dy * hd - perpy * hd)
+        cr.stroke()
+        cr.move_to(px + 40, py + ph / 2 + 4.5)
+        cr.show_text(txt)
+
+    def keep_above_desktop(win):
         gw = win.get_window()
         if gw is None:
             return
@@ -2125,48 +2066,172 @@ def run_window(interval=2.0):
             return
         xids = [w.get_xid() for w in stack]
         if xids and xids[0] == gw.get_xid():
-            log("panel had sunk below the desktop window, re-mapping")
             win.hide()
             win.show()
+
+    def place(pw, cfg, h):
+        global TARGET_H
+        win = pw["win"]
+        disp = Gdk.Display.get_default()
+        mon = (disp.get_monitor(cfg.get("monitor", 0))
+               or disp.get_primary_monitor() or disp.get_monitor(0))
+        wa = mon.get_workarea()
+        margin = load_settings().get("margin", MARGIN)
+        pos = cfg.get("position", "top-right")
+        off = cfg.get("offset")
+        if pw["idx"] == 0:
+            TARGET_H = max(200, wa.height - 2 * margin)
+        if pos == "free" and isinstance(off, (list, tuple)) and len(off) == 2:
+            x, yy = wa.x + int(off[0]), wa.y + int(off[1])
+        else:
+            x = wa.x + wa.width - W - margin
+            yy = wa.y + margin
+        x = max(wa.x, min(x, wa.x + wa.width - W))
+        yy = max(wa.y, min(yy, wa.y + wa.height - h))
+        win.set_size_request(W, h)
+        win.move(x, yy)
+
+    panels = []
+
+    def setup(pw):
+        win, st = pw["win"], pw["state"]
+
+        def on_draw(_w, cr):
+            if st["surface"] is not None:
+                cr.set_operator(cairo.OPERATOR_SOURCE)
+                cr.set_source_surface(st["surface"], 0, 0)
+                cr.paint()
+            if st.get("moving"):
+                draw_banner(cr, win)
+            return False
+
+        def on_realize(_w):
+            win.get_window().input_shape_combine_region(cairo.Region(), 0, 0)
+
+        def enter_move():
+            gw = win.get_window()
+            if gw is None:
+                return
+            w = win.get_allocated_width() or W
+            h = win.get_allocated_height() or st.get("h") or 1000
+            gw.input_shape_combine_region(cairo.Region(cairo.RectangleInt(0, 0, w, h)), 0, 0)
+            win.set_keep_below(False)
+            win.set_keep_above(True)
+            st["moving"] = True
+            win.queue_draw()
+
+        def exit_move():
+            gw = win.get_window()
+            if gw is not None:
+                gw.input_shape_combine_region(cairo.Region(), 0, 0)
+            win.set_keep_above(False)
+            win.set_keep_below(True)
+            st["moving"] = False
+            win.queue_draw()
+
+        st["enter_move"], st["exit_move"] = enter_move, exit_move
+        drag = st["drag"]
+
+        def on_press(_w, ev):
+            if not st.get("moving"):
+                return False
+            drag["active"] = True
+            drag["sx"], drag["sy"] = ev.x_root, ev.y_root
+            drag["wx"], drag["wy"] = win.get_position()
+            return True
+
+        def on_motion(_w, ev):
+            if st.get("moving") and drag["active"]:
+                win.move(int(drag["wx"] + (ev.x_root - drag["sx"])),
+                         int(drag["wy"] + (ev.y_root - drag["sy"])))
+            return False
+
+        def on_release(_w, ev):
+            if not st.get("moving"):
+                return False
+            drag["active"] = False
+            wx, wy = win.get_position()
+            disp = Gdk.Display.get_default()
+            mon = (disp.get_monitor_at_point(wx + W // 2, wy + (st["h"] or 0) // 2)
+                   or disp.get_primary_monitor())
+            wa = mon.get_workarea()
+            s = dict(load_settings())
+            cfgs = [dict(c) for c in (s.get("panels") or [])]
+            while len(cfgs) <= pw["idx"]:
+                cfgs.append({"monitor": 0, "position": "top-right", "offset": None})
+            cfgs[pw["idx"]] = {"monitor": mon_index(disp, mon), "position": "free",
+                               "offset": [wx - wa.x, wy - wa.y]}
+            s["panels"] = cfgs
+            s["move"] = None
+            save_settings(s)
+            st["placekey"] = None
+            exit_move()
+            return True
+
+        def on_destroy(_w):
+            if not pw.get("closing"):
+                Gtk.main_quit()
+
+        win.add_events(Gdk.EventMask.BUTTON_PRESS_MASK | Gdk.EventMask.BUTTON_RELEASE_MASK
+                       | Gdk.EventMask.POINTER_MOTION_MASK | Gdk.EventMask.BUTTON1_MOTION_MASK)
+        win.connect("draw", on_draw)
+        win.connect("realize", on_realize)
+        win.connect("button-press-event", on_press)
+        win.connect("motion-notify-event", on_motion)
+        win.connect("button-release-event", on_release)
+        win.connect("destroy", on_destroy)
+
+    def sync_count(n):
+        while len(panels) < n:
+            pw = {"win": make_window(), "idx": len(panels), "closing": False,
+                  "state": {"surface": None, "buf": None, "h": 0, "moving": False,
+                            "drag": {"active": False, "sx": 0, "sy": 0, "wx": 0, "wy": 0},
+                            "placekey": None}}
+            setup(pw)
+            panels.append(pw)
+            pw["win"].show_all()
+        while len(panels) > n:
+            pw = panels.pop()
+            pw["closing"] = True
+            pw["win"].destroy()
 
     def tick():
         try:
             img = render(write_png=False)
-            state["surface"], state["buf"] = surface_from(img)
-            state["h"] = img.height
+            surf, buf = surface_from(img)
             s = load_settings()
-            if s.get("move") and not state.get("moving"):
-                enter_move()
-            elif not s.get("move") and state.get("moving"):
-                exit_move()
-            if not state.get("moving"):
-                key = (img.height, s.get("monitor"), s.get("position"),
-                       s.get("margin"), tuple(s.get("offset") or ()))
-                if key != state.get("placekey"):
-                    state["placekey"] = key
-                    place(img.height)
-                keep_above_desktop()
-            win.queue_draw()
-            state["fails"] = 0
+            cfgs = s.get("panels") or [{"monitor": 0, "position": "top-right", "offset": None}]
+            sync_count(max(1, len(cfgs)))
+            move_idx = s.get("move")
+            if move_idx is True:
+                move_idx = 0
+            for i, pw in enumerate(panels):
+                st = pw["state"]
+                pw["idx"] = i
+                st["surface"], st["buf"], st["h"] = surf, buf, img.height
+                cfg = cfgs[i] if i < len(cfgs) else {}
+                if move_idx == i and not st.get("moving"):
+                    st["enter_move"]()
+                elif move_idx != i and st.get("moving"):
+                    st["exit_move"]()
+                if not st.get("moving"):
+                    key = (img.height, cfg.get("monitor"), cfg.get("position"),
+                           s.get("margin"), tuple(cfg.get("offset") or ()))
+                    if key != st.get("placekey"):
+                        st["placekey"] = key
+                        place(pw, cfg, img.height)
+                    keep_above_desktop(pw["win"])
+                pw["win"].queue_draw()
+            tick.fails = 0
         except Exception:
-            state["fails"] += 1
-            if state["fails"] <= 3:
+            tick.fails = getattr(tick, "fails", 0) + 1
+            if tick.fails <= 3:
                 log(f"render failed:\n{traceback.format_exc().rstrip()}")
-                if state["fails"] == 3:
+                if tick.fails == 3:
                     log("further identical failures will not be logged")
         return True
 
-    win.add_events(Gdk.EventMask.BUTTON_PRESS_MASK | Gdk.EventMask.BUTTON_RELEASE_MASK
-                   | Gdk.EventMask.POINTER_MOTION_MASK | Gdk.EventMask.BUTTON1_MOTION_MASK)
-    win.connect("draw", on_draw)
-    win.connect("realize", on_realize)
-    win.connect("button-press-event", on_press)
-    win.connect("motion-notify-event", on_motion)
-    win.connect("button-release-event", on_release)
-    win.connect("destroy", Gtk.main_quit)
     tick()
-    place(state["h"] or 900)
-    win.show_all()
     GLib.timeout_add(int(interval * 1000), tick)
     log(f"panel started (pid {os.getpid()})")
     Gtk.main()
@@ -2190,7 +2255,7 @@ def run_settings():
 
     /* Header */
     .app-title { color: #e9eef5; font-size: 18px; font-weight: 800; }
-    .app-subtitle { color: #8a94a4; font-size: 12px; }
+    .app-subtitle { color: #e9eef5; font-size: 12px; }
 
     /* Grouped cards */
     .group {
@@ -2202,7 +2267,7 @@ def run_settings():
         color: #60b0ff; font-size: 11px; font-weight: 800;
         letter-spacing: 1.4px;
     }
-    .field-label { color: #97a1b0; font-size: 13px; }
+    .field-label { color: #e9eef5; font-size: 13px; }
 
     /* Inputs */
     entry, spinbutton, spinbutton entry, combobox button {
@@ -2252,8 +2317,8 @@ def run_settings():
     }
 
     /* Secondary text */
-    .hint { color: #6f7887; font-size: 11px; }
-    .result { color: #8a94a4; font-size: 12px; }
+    .hint { color: #e9eef5; font-size: 11px; }
+    .result { color: #e9eef5; font-size: 12px; }
     .result-ok { color: #7fc6a0; font-size: 12px; }
     .status-ok { color: #7fc6a0; font-size: 12px; }
 
@@ -2286,37 +2351,45 @@ def run_settings():
     win.set_border_width(0)
     win.set_default_size(480, 860)
 
-    # Outer layout: fixed header, scrollable grouped content, fixed action bar.
+    # Outer layout: everything scrolls (header included), with only the action
+    # bar pinned at the bottom.
     outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
     win.add(outer)
-
-    header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-    _cls(header, "header")
-    header.set_border_width(18)
-    header.pack_start(_cls(Gtk.Label(label="Linux Mint HUD", xalign=0), "app-title"), False, False, 0)
-    header.pack_start(_cls(Gtk.Label(label="Panel appearance & readouts", xalign=0), "app-subtitle"), False, False, 0)
-    outer.pack_start(header, False, False, 0)
 
     scroller = Gtk.ScrolledWindow()
     scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
     outer.pack_start(scroller, True, True, 0)
 
-    content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
+    content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
     _cls(content, "content")
-    content.set_border_width(18)
+    content.set_border_width(20)
     scroller.add(content)
 
+    header = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+    header.pack_start(_cls(Gtk.Label(label="Linux Mint HUD", xalign=0), "app-title"), False, False, 0)
+    header.pack_start(_cls(Gtk.Label(label="Panel appearance & readouts", xalign=0), "app-subtitle"), False, False, 0)
+    content.pack_start(header, False, False, 0)
+
+    _grp = [0]
+
+    def _noscroll(w):
+        """Stop the mouse wheel from changing a combo/spin value while the user
+        is just scrolling the window past it."""
+        w.connect("scroll-event", lambda *a: True)
+        return w
+
     def make_group(title):
-        """Return (card, grid, counter) for a labelled group of rows."""
-        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        _cls(card, "group")
-        card.set_border_width(16)
-        _cls(head := Gtk.Label(label=title.upper(), xalign=0), "group-heading")
-        card.pack_start(head, False, False, 0)
+        """A labelled group of rows, set off from the previous one by a hairline
+        rather than sitting in its own boxed card."""
+        if _grp[0] > 0:
+            content.pack_start(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL), False, False, 6)
+        _grp[0] += 1
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        box.pack_start(_cls(Gtk.Label(label=title.upper(), xalign=0), "group-heading"), False, False, 0)
         g = Gtk.Grid(row_spacing=11, column_spacing=14)
-        card.pack_start(g, False, False, 0)
-        content.pack_start(card, False, False, 0)
-        return card, g, [0]
+        box.pack_start(g, False, False, 0)
+        content.pack_start(box, False, False, 0)
+        return box, g, [0]
 
     def field(grid, counter, label_text, widget):
         """Attach a label/control row inside a group grid."""
@@ -2334,30 +2407,58 @@ def run_settings():
     # ---- Placement -------------------------------------------------------
     _, pg, pc = make_group("Placement")
     disp = Gdk.Display.get_default()
-    n = disp.get_n_monitors()
-    mon_combo = Gtk.ComboBoxText()
-    for i in range(n):
-        g = disp.get_monitor(i).get_geometry()
-        prim = " (primary)" if disp.get_monitor(i).is_primary() else ""
-        mon_combo.append(str(i), f"{i}:  {g.width}×{g.height}{prim}")
-    mid = s.get("monitor", 0)
-    mon_combo.set_active_id(str(mid if 0 <= mid < n else 0))
-    field(pg, pc, "Monitor", mon_combo)
+    panels_now = s.get("panels") or [{}]
 
-    pos_combo = Gtk.ComboBoxText()
-    for key, txt in (("top-left", "Top left"), ("top-right", "Top right"),
-                     ("bottom-left", "Bottom left"), ("bottom-right", "Bottom right"),
-                     ("free", "Custom (dragged)")):
-        pos_combo.append(key, txt)
-    pos_combo.set_active_id(s.get("position", "top-right"))
-    field(pg, pc, "Position", pos_combo)
+    move1 = _cls(Gtk.Button(label="Move panel…"), "ghost")
+    field(pg, pc, "Panel", move1)
+    second_chk = Gtk.CheckButton(label="Second panel (drag it to another monitor)")
+    second_chk.set_active(len(panels_now) >= 2)
+    field(pg, pc, "", second_chk)
+    move2 = _cls(Gtk.Button(label="Move second panel…"), "ghost")
+    move2.set_sensitive(len(panels_now) >= 2)
+    field(pg, pc, "", move2)
+    reset_btn = Gtk.Button(label="Reset positions")
+    field(pg, pc, "", reset_btn)
 
-    margin_spin = Gtk.SpinButton.new_with_range(0, 200, 1)
+    def _nmon():
+        return disp.get_n_monitors()
+
+    def do_move(idx):
+        st = dict(load_settings())
+        cfgs = [dict(c) for c in (st.get("panels") or [])] or [{"monitor": 0, "position": "top-right", "offset": None}]
+        while len(cfgs) <= idx:
+            cfgs.append({"monitor": 1 if _nmon() > 1 else 0, "position": "top-right", "offset": None})
+        st["panels"] = cfgs
+        st["move"] = idx
+        save_settings(st)
+        status.set_text("Drag that panel where you want it, then release to drop it.")
+
+    def set_two(active):
+        st = dict(load_settings())
+        cfgs = [dict(c) for c in (st.get("panels") or [])] or [{"monitor": 0, "position": "top-right", "offset": None}]
+        if active and len(cfgs) < 2:
+            cfgs.append({"monitor": 1 if _nmon() > 1 else 0, "position": "top-right", "offset": None})
+        st["panels"] = cfgs[:2] if active else cfgs[:1]
+        st["move"] = None
+        save_settings(st)
+        move2.set_sensitive(active)
+
+    def do_reset(_b):
+        st = dict(load_settings())
+        k = max(1, len(st.get("panels") or [{}]))
+        st["panels"] = [{"monitor": 0, "position": "top-right", "offset": None} for _ in range(k)]
+        st["move"] = None
+        save_settings(st)
+        status.set_text("Positions reset to the top-right corner.")
+
+    move1.connect("clicked", lambda *_: do_move(0))
+    move2.connect("clicked", lambda *_: do_move(1))
+    second_chk.connect("toggled", lambda cb: set_two(cb.get_active()))
+    reset_btn.connect("clicked", do_reset)
+
+    margin_spin = _noscroll(Gtk.SpinButton.new_with_range(0, 200, 1))
     margin_spin.set_value(s.get("margin", 22))
     field(pg, pc, "Edge margin (px)", margin_spin)
-
-    move_btn = _cls(Gtk.Button(label="Move panel on screen…"), "ghost")
-    field(pg, pc, "", move_btn)
 
     # ---- Weather ---------------------------------------------------------
     _, wg, wc = make_group("Weather")
@@ -2418,7 +2519,7 @@ def run_settings():
 
     # ---- Temperature -----------------------------------------------------
     _, tg, tc = make_group("Temperature")
-    units_combo = Gtk.ComboBoxText()
+    units_combo = _noscroll(Gtk.ComboBoxText())
     units_combo.append("c", "Celsius (°C)")
     units_combo.append("f", "Fahrenheit (°F)")
     units_combo.set_active_id(s.get("units", "c"))
@@ -2485,8 +2586,6 @@ def run_settings():
 
     def do_save(_b):
         new = dict(load_settings())
-        new["monitor"] = int(mon_combo.get_active_id() or 0)
-        new["position"] = pos_combo.get_active_id() or "top-right"
         new["margin"] = int(margin_spin.get_value())
         new["location"] = loc_state["data"]
         new["units"] = units_combo.get_active_id() or "c"
@@ -2502,14 +2601,6 @@ def run_settings():
     save.connect("clicked", do_save)
     save.get_style_context().add_class("accent")
     close.connect("clicked", lambda *_: win.close())
-
-    def do_move(_b):
-        m = dict(load_settings())
-        m["move"] = True
-        save_settings(m)
-        pos_combo.set_active_id("free")
-        status.set_text("Drag the panel on your desktop, then release to drop it there.")
-    move_btn.connect("clicked", do_move)
 
     win.connect("destroy", Gtk.main_quit)
     win.show_all()
