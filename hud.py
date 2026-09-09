@@ -35,6 +35,33 @@ LOCK_FILE = os.path.join(CACHE_DIR, "hud.lock")
 SETTINGS_FILE = os.path.join(CONF_DIR, "settings.json")
 WEATHER_FILE = os.path.join(CONF_DIR, "weather.json")
 
+# Every panel section, in the default top-to-bottom order. Single source of
+# truth for: the render order, the on/off checkboxes, and the drag-to-reorder
+# list in the settings window. "top" is the combined quota/weather slot that
+# alternates; "claude" and "weather" are the same content on their own, so a
+# user can place either (or both) wherever they like — they default off so the
+# stock panel keeps the single alternating slot.
+SECTION_DEFS = [
+    ("top", "Quota / weather"),
+    ("claude", "Quota only"),
+    ("weather", "Weather only"),
+    ("load", "Uptime & load"),
+    ("gauges", "CPU / GPU / RAM"),
+    ("cores", "Core strip"),
+    ("history", "History"),
+    ("thermals", "Thermals"),
+    ("memory", "Memory & swap"),
+    ("disk", "Disk"),
+    ("network", "Network"),
+    ("power", "Power"),
+    ("battery", "Battery"),
+    ("devices", "Devices"),
+    ("processes", "Top processes"),
+]
+SECTION_ORDER = [k for k, _ in SECTION_DEFS]
+SECTION_LABELS = dict(SECTION_DEFS)
+_DEFAULT_OFF = {"claude", "weather"}
+
 DEFAULT_SETTINGS = {
     "panels": None,                # list of {monitor, position, offset}; None -> one
     "move": None,                  # index of the panel being placed by hand, or None
@@ -48,10 +75,8 @@ DEFAULT_SETTINGS = {
     "disks": None,                 # mount points to show; None -> just "/"
     "sensors": None,               # temp-sensor ids for thermals; None -> auto
     "peripherals": None,           # peripheral-battery ids to show; None -> none
-    "sections": {"top": True, "load": True, "gauges": True, "cores": True,
-                 "history": True, "thermals": True, "memory": True, "disk": True,
-                 "network": True, "power": True, "battery": True, "devices": True,
-                 "processes": True},
+    "sections": {k: (k not in _DEFAULT_OFF) for k in SECTION_ORDER},
+    "order": None,                 # custom section order (list of keys); None -> default
 }
 
 
@@ -1412,6 +1437,15 @@ def load_settings():
         if isinstance(data.get("sections"), dict):
             sec.update(data["sections"])
         s["sections"] = sec
+        # normalise the custom order: keep only known keys, then append any
+        # section the saved order predates (a new key) in its default slot.
+        order = data.get("order")
+        if isinstance(order, list):
+            kept = [k for k in order if k in SECTION_ORDER]
+            seen = set(kept)
+            s["order"] = kept + [k for k in SECTION_ORDER if k not in seen]
+        else:
+            s["order"] = list(SECTION_ORDER)
         if "vmargin" not in data:
             s["vmargin"] = data.get("margin", 22)
         if "hmargin" not in data:
@@ -1637,21 +1671,10 @@ def render(write_png=True):
             pass
     have_weather = weather is not None
 
-    ALT_PERIOD = 8
-    if have_claude and have_weather:
-        slot = "weather" if int(time.time() // ALT_PERIOD) % 2 else "claude"
-    elif have_claude:
-        slot = "claude"
-    elif have_weather:
-        slot = "weather"
-    else:
-        slot = None
-    if not SECTIONS.get("top", True):
-        slot = None
-
     SLOT_H = 95
-    slot_start = y
-    if slot == "claude":
+    ALT_PERIOD = 8
+
+    def draw_claude(y):
         label(d, PAD, y, "claude", CORAL, tracking=2.4)
         y += 23
         for name, item in (("session", sess), ("week", week)):
@@ -1666,10 +1689,11 @@ def render(write_png=True):
             y += 19
             bar(img, PAD, y, CW, 8, pct / 100, ramp=True)
             y += 17
-    elif slot == "weather":
-        label(d, PAD, y, "weather", ACCENT, tracking=2.4)
+
+    def draw_weather(y0):
+        label(d, PAD, y0, "weather", ACCENT, tracking=2.4)
         if weather.get("name"):
-            label_r(d, R, y, weather["name"], TEXT, size=T_MICRO)
+            label_r(d, R, y0, weather["name"], TEXT, size=T_MICRO)
         t = weather["temp"]
         f_temp = F(MONO_LIGHT, T_HERO)
         icon_s = 22
@@ -1679,10 +1703,10 @@ def render(write_png=True):
         gap_it = 14
         group_w = iw + gap_it + tw
         gx = PAD + (CW - group_w) / 2.0
-        hero_cy = slot_start + 46
+        hero_cy = y0 + 46
         draw_weather_icon(img, gx + iw / 2, hero_cy, icon_s, weather.get("code", 3))
         text(d, gx + iw + gap_it, hero_cy - 21, ttxt, f_temp, TEXT)
-        dy = slot_start + 80
+        dy = y0 + 80
         f_dv = F(MONO_REG, T_VALUE)
         f_dl = F(UI_SEMI, T_MICRO)
         cells = (("min", weather['lo']), ("max", weather['hi']),
@@ -1699,11 +1723,31 @@ def render(write_png=True):
             text(d, x0, dy + 3, lab.upper(), f_dl, TEXT, tracking=1.4)
             text(d, x0 + lw + gap_lv, dy, val, f_dv, vcol)
 
-    if slot:
-        y = slot_start + SLOT_H
-        y += gap(26)
+    def sec_top(y):
+        if have_claude and have_weather:
+            which = "weather" if int(time.time() // ALT_PERIOD) % 2 else "claude"
+        elif have_claude:
+            which = "claude"
+        elif have_weather:
+            which = "weather"
+        else:
+            return y
+        (draw_claude if which == "claude" else draw_weather)(y)
+        return y + SLOT_H + gap(26)
 
-    if SECTIONS.get("load", True):
+    def sec_claude(y):
+        if not have_claude:
+            return y
+        draw_claude(y)
+        return y + SLOT_H + gap(26)
+
+    def sec_weather(y):
+        if not have_weather:
+            return y
+        draw_weather(y)
+        return y + SLOT_H + gap(26)
+
+    def sec_load(y):
         label(d, PAD, y, "uptime", ACCENT)
         label_r(d, R, y, "load 1·5·15m", ACCENT)
         y += 14
@@ -1714,17 +1758,17 @@ def render(write_png=True):
             text(d, lx, y + 6, v, f_load, load_color(float(v or 0), len(core_loads) or 1),
                  anchor="r")
             lx -= measure(f_load, v) / SS + 9
-        y += gap(40)
+        return y + gap(40)
 
-    if SECTIONS.get("gauges", True):
+    def sec_gauges(y):
         gr, gth = 46, 9
         gauges = [("cpu", cpu_pct, ACCENT)]
         if have_gpu:
             gauges.append(("gpu", gpu_pct, VIOLET))
         gauges.append(("ram", mem_used / mem_total * 100, TEAL))
-        slot = CW / len(gauges)
+        gwidth = CW / len(gauges)
         for i, (name, pct, hue) in enumerate(gauges):
-            cx = PAD + slot * (i + 0.5)
+            cx = PAD + gwidth * (i + 0.5)
             cy = y + gr + 4
             col = state_color(pct, hue)
             gauge(img, cx, cy, gr, gth, pct / 100, col)
@@ -1736,9 +1780,9 @@ def render(write_png=True):
             text(d, x0 + bw + 3, cy - 6, unit, f_u, TEXT)
             lw = measure(F(UI_SEMI, T_LABEL), name.upper(), 1.8) / SS
             label(d, cx - lw / 2, cy + gr + 10, name, hue, tracking=1.8)
-        y += 2 * gr + gap(36)
+        return y + 2 * gr + gap(36)
 
-    if SECTIONS.get("cores", True):
+    def sec_cores(y):
         label(d, PAD, y, "cores", ACCENT)
         rx_ = R
         ghz = cpu_freq_ghz()
@@ -1749,9 +1793,9 @@ def render(write_png=True):
         label_r(d, rx_, y, f"{len(core_loads)} threads", TEXT)
         y += 15
         core_strip(img, PAD, y, CW, 24, core_loads)
-        y += 24 + gap(14)
+        return y + 24 + gap(14)
 
-    if SECTIONS.get("history", True):
+    def sec_history(y):
         label(d, PAD, y, "history", ACCENT)
         label_r(d, R, y, "60 min", TEXT)
         y += 15
@@ -1767,26 +1811,29 @@ def render(write_png=True):
             y += 24
         else:
             y += 6
+        return y
 
-    sel = _s.get("sensors")
-    if sel:
-        by_id = {s["id"]: s for s in list_sensors()}
-        chosen = [by_id[i] for i in sel if i in by_id][:4]
-        therms = [(s["label"].lower(), read_sensor(s["path"]), s["warn"], s["crit"])
-                  for s in chosen]
-    else:
-        therms = (("cpu", cpu_t, 80, 95), ("ssd", nvme_t, 65, 75),
-                  ("wifi", wifi_t, 75, 85))
-    f_tl, f_tv = F(UI_SEMI, T_MICRO), F(MONO_REG, T_BODY)
-    groups = []
-    for lab, tv, warn, crit in therms:
-        if tv is None:
-            continue
-        val = temp_str(tv, UNITS)
-        lw = measure(f_tl, lab.upper(), 1.4) / SS
-        vw = measure(f_tv, val) / SS
-        groups.append((lab.upper(), lw, val, vw, temp_gradient(tv, warn, crit)))
-    if groups and SECTIONS.get("thermals", True):
+    def sec_thermals(y):
+        sel = _s.get("sensors")
+        if sel:
+            by_id = {s["id"]: s for s in list_sensors()}
+            chosen = [by_id[i] for i in sel if i in by_id][:4]
+            therms = [(s["label"].lower(), read_sensor(s["path"]), s["warn"], s["crit"])
+                      for s in chosen]
+        else:
+            therms = (("cpu", cpu_t, 80, 95), ("ssd", nvme_t, 65, 75),
+                      ("wifi", wifi_t, 75, 85))
+        f_tl, f_tv = F(UI_SEMI, T_MICRO), F(MONO_REG, T_BODY)
+        groups = []
+        for lab, tv, warn, crit in therms:
+            if tv is None:
+                continue
+            val = temp_str(tv, UNITS)
+            lw = measure(f_tl, lab.upper(), 1.4) / SS
+            vw = measure(f_tv, val) / SS
+            groups.append((lab.upper(), lw, val, vw, temp_gradient(tv, warn, crit)))
+        if not groups:
+            return y
         label(d, PAD, y, "thermals", RED)
         gap_lv, gap_gg = 6, 20
         total = sum(lw + gap_lv + vw for _, lw, _, vw, _ in groups) + gap_gg * (len(groups) - 1)
@@ -1795,9 +1842,9 @@ def render(write_png=True):
             text(d, gx, y + 1, labu, f_tl, TEXT, tracking=1.4)
             text(d, gx + lw + gap_lv, y - 1, val, f_tv, col)
             gx += lw + gap_lv + vw + gap_gg
-        y += gap(33)
+        return y + gap(33)
 
-    if SECTIONS.get("memory", True):
+    def sec_memory(y):
         mfrac = mem_used / mem_total
         label(d, PAD, y, "memory", TEAL)
         text(d, R, y - 2, f"{fmt_bytes(mem_used)} / {fmt_bytes(mem_total)}", f_val, TEXT, anchor="r")
@@ -1811,9 +1858,9 @@ def render(write_png=True):
             y += 14
             bar(img, PAD, y, CW, 4, sfrac, state_color(sfrac * 100, TEAL))
             y += 8
-        y += gap(22)
+        return y + gap(22)
 
-    if SECTIONS.get("disk", True):
+    def sec_disk(y):
         label(d, PAD, y, "disk", PINK)
         infos = []
         for mp in (_s.get("disks") or ["/"]):
@@ -1845,9 +1892,9 @@ def render(write_png=True):
         text(d, PAD + 34, y, fmt_bytes(rd, True), f_val_sm, TEXT)
         text(d, R, y, fmt_bytes(wr, True), f_val_sm, TEXT, anchor="r")
         text(d, R - measure(f_val_sm, fmt_bytes(wr, True)) / SS - 9, y, "write", F(UI_MED, T_BODY), TEXT, anchor="r")
-        y += gap(30)
+        return y + gap(30)
 
-    if SECTIONS.get("network", True):
+    def sec_network(y):
         label(d, PAD, y, "network", ACCENT)
         y += 16
         peak = net_chart(img, PAD, y, CW, 60, ACCENT, CORAL, floor=64 * 1024)
@@ -1855,12 +1902,11 @@ def render(write_png=True):
         text(d, PAD, y, f"↓ {fmt_bytes(down, True)}", f_val_sm, ACCENT)
         text(d, W / 2, y, f"peak {fmt_bytes(peak, True)}", F(MONO_REG, T_LABEL), TEXT, anchor="c")
         text(d, R, y, f"↑ {fmt_bytes(up, True)}", f_val_sm, CORAL, anchor="r")
-        y += gap(30)
+        return y + gap(30)
 
-    charging = bstatus == "Charging"
-    have_battery = bstatus != "no battery"
-    have_power = power_src != "battery" or have_battery
-    if have_power and SECTIONS.get("power", True):
+    def sec_power(y):
+        if not have_power:
+            return y
         label(d, PAD, y, "power", AMBER)
         ux = R
         if ac_w > 0.05 and have_battery:
@@ -1889,9 +1935,11 @@ def render(write_png=True):
                 text(d, lx + (15 if is_line else 12), y, txt, F(UI_MED, T_LABEL), col)
                 lx += (15 if is_line else 12) + measure(F(UI_MED, T_LABEL), txt) / SS + 16
             y += 12
-        y += gap(20)
+        return y + gap(20)
 
-    if have_battery and SECTIONS.get("battery", True):
+    def sec_battery(y):
+        if not have_battery:
+            return y
         full = bstatus == "Full" or cap >= 100
         if charging or full:
             bcol = GREEN
@@ -1918,25 +1966,27 @@ def render(write_png=True):
         y += 16
         bar(img, PAD, y, CW, 6, cap / 100, bcol)
         y += 18
-        y += gap(10)
+        return y + gap(10)
 
-    # ============ DEVICES (peripheral batteries) =================
-    periph_sel = _s.get("peripherals") or []
-    if periph_sel and SECTIONS.get("devices", True):
+    def sec_devices(y):
+        periph_sel = _s.get("peripherals") or []
+        if not periph_sel:
+            return y
         devs = [p for p in peripheral_batteries()
                 if p["id"] in periph_sel and p["capacity"] is not None]
-        if devs:
-            label(d, PAD, y, "devices", VIOLET)
-            y += 18
-            for p in devs:
-                cap = p["capacity"]
-                col = GREEN if p["status"] == "Charging" else ramp_rgb(1 - cap / 100)
-                text(d, PAD, y - 2, p["name"][:26], F(UI_MED, T_BODY), TEXT)
-                text(d, R, y - 2, f"{cap}%", f_val, col, anchor="r")
-                y += 15
-                bar(img, PAD, y, CW, 5, cap / 100, col)
-                y += 13
-            y += gap(20)
+        if not devs:
+            return y
+        label(d, PAD, y, "devices", VIOLET)
+        y += 18
+        for p in devs:
+            dcap = p["capacity"]
+            col = GREEN if p["status"] == "Charging" else ramp_rgb(1 - dcap / 100)
+            text(d, PAD, y - 2, p["name"][:26], F(UI_MED, T_BODY), TEXT)
+            text(d, R, y - 2, f"{dcap}%", f_val, col, anchor="r")
+            y += 15
+            bar(img, PAD, y, CW, 5, dcap / 100, col)
+            y += 13
+        return y + gap(20)
 
     def proc_list(y, title, hue, rows, value_of, fmt_of, colour_of,
                   right=None, total=None, curve=1.0):
@@ -1967,7 +2017,7 @@ def render(write_png=True):
             y += 22
         return y
 
-    if SECTIONS.get("processes", True):
+    def sec_processes(y):
         y = proc_list(y, "top cpu", ACCENT, top_cpu,
                       value_of=lambda r: r[1],
                       fmt_of=lambda r: f"{r[1]:.1f}%",
@@ -1980,7 +2030,25 @@ def render(write_png=True):
                       fmt_of=lambda r: fmt_bytes(r[2]),
                       colour_of=lambda r: TEAL,
                       right="share of ram", total=mem_total, curve=0.5)
-        y += 22
+        return y + 22
+
+    have_battery = bstatus != "no battery"
+    have_power = power_src != "battery" or have_battery
+    charging = bstatus == "Charging"
+    section_fns = {
+        "top": sec_top, "claude": sec_claude, "weather": sec_weather,
+        "load": sec_load, "gauges": sec_gauges, "cores": sec_cores,
+        "history": sec_history, "thermals": sec_thermals, "memory": sec_memory,
+        "disk": sec_disk, "network": sec_network, "power": sec_power,
+        "battery": sec_battery, "devices": sec_devices, "processes": sec_processes,
+    }
+    # Draw the sections in the user's chosen order (already normalised to a full
+    # list of known keys in load_settings), skipping the ones switched off.
+    for key in (_s.get("order") or SECTION_ORDER):
+        fn = section_fns.get(key)
+        if fn is not None and SECTIONS.get(key, True):
+            y = fn(y)
+
     H = int(round(y))
 
     # Stretch the gaps between sections to fill TARGET_H (work area minus the
@@ -2613,6 +2681,15 @@ def run_settings():
     .subtle:hover { color: #dbe3ee; background-color: rgba(255,255,255,0.05); border: none; }
     .subtle:active { background-color: rgba(255,255,255,0.08); }
 
+    /* Drag-to-reorder section list */
+    .order-list {
+        background-color: #14171c; border: 1px solid #262b33; border-radius: 10px;
+    }
+    .order-list row { border-bottom: 1px solid #20252d; }
+    .order-list row:last-child { border-bottom: none; }
+    .order-list row:hover { background-color: rgba(96,176,255,0.10); }
+    .order-list row.dragging { background-color: rgba(96,176,255,0.20); }
+
     /* Bottom action bar */
     .actionbar { background-color: #000000; border-top: 1px solid #262b33; }
     .header { background-color: #000000; border-bottom: 1px solid #262b33; }
@@ -2823,18 +2900,85 @@ def run_settings():
     _, seg, sec_ = make_group("Panel sections")
     secgrid = Gtk.Grid(row_spacing=8, column_spacing=24)
     checks = {}
-    for idx, (key, txt) in enumerate((("top", "Quota / weather"), ("load", "Uptime & load"),
-                                      ("gauges", "CPU / GPU / RAM"), ("cores", "Core strip"),
-                                      ("history", "History"), ("thermals", "Thermals"),
-                                      ("memory", "Memory & swap"), ("disk", "Disk"),
-                                      ("network", "Network"), ("power", "Power"),
-                                      ("battery", "Battery"), ("devices", "Devices"),
-                                      ("processes", "Top processes"))):
+    for idx, (key, txt) in enumerate(SECTION_DEFS):
         cb = Gtk.CheckButton(label=txt)
         cb.set_active(s["sections"].get(key, True))
         checks[key] = cb
         secgrid.attach(cb, idx % 2, idx // 2, 1, 1)
     field(seg, sec_, "", secgrid)
+
+    # ---- Order (drag to reorder) ----------------------------------------
+    # A list of just the enabled sections that the user can drag into any
+    # order; that order drives the render top-to-bottom. Toggling a section
+    # above adds or removes its row here without disturbing the rest.
+    _, og, oc = make_group("Order")
+    full_order = list(s.get("order") or SECTION_ORDER)
+    order_list = Gtk.ListBox()
+    order_list.set_selection_mode(Gtk.SelectionMode.NONE)
+    _cls(order_list, "order-list")
+    ROW_TARGET = [Gtk.TargetEntry.new("HUD_ROW", Gtk.TargetFlags.SAME_APP, 0)]
+    drag_src = {"row": None}
+
+    def _on_drag_begin(row, ctx):
+        drag_src["row"] = row
+        row.get_style_context().add_class("dragging")
+
+    def _on_drag_end(row, ctx):
+        row.get_style_context().remove_class("dragging")
+        drag_src["row"] = None
+
+    def _on_drag_get(row, ctx, sel, info, t):
+        sel.set(sel.get_target(), 8, b"\x00")
+
+    def _on_drag_received(dest_row, ctx, x, y, sel, info, t):
+        src = drag_src["row"]
+        if src is None or src is dest_row:
+            return
+        sk, dk = src.key, dest_row.key
+        vis = _visible_keys()
+        if sk not in vis or dk not in vis:
+            return
+        vis.remove(sk)
+        dest_i = vis.index(dk)
+        if y > dest_row.get_allocated_height() / 2:
+            dest_i += 1
+        vis.insert(dest_i, sk)
+        it = iter(vis)
+        full_order[:] = [next(it) if checks[k].get_active() else k for k in full_order]
+        _rebuild_order_rows()
+        commit()
+
+    def _make_order_row(key):
+        row = Gtk.ListBoxRow()
+        row.key = key
+        hb = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=11)
+        hb.set_margin_start(4)
+        hb.set_margin_end(4)
+        hb.set_margin_top(5)
+        hb.set_margin_bottom(5)
+        hb.pack_start(_cls(Gtk.Label(label="≡"), "hint"), False, False, 0)
+        hb.pack_start(Gtk.Label(label=SECTION_LABELS.get(key, key), xalign=0), True, True, 0)
+        row.add(hb)
+        row.drag_source_set(Gdk.ModifierType.BUTTON1_MASK, ROW_TARGET, Gdk.DragAction.MOVE)
+        row.drag_dest_set(Gtk.DestDefaults.ALL, ROW_TARGET, Gdk.DragAction.MOVE)
+        row.connect("drag-begin", _on_drag_begin)
+        row.connect("drag-end", _on_drag_end)
+        row.connect("drag-data-get", _on_drag_get)
+        row.connect("drag-data-received", _on_drag_received)
+        return row
+
+    def _visible_keys():
+        return [k for k in full_order if checks[k].get_active()]
+
+    def _rebuild_order_rows():
+        for c in order_list.get_children():
+            order_list.remove(c)
+        for k in _visible_keys():
+            order_list.add(_make_order_row(k))
+        order_list.show_all()
+
+    field(og, oc, "", order_list)
+    _rebuild_order_rows()
 
     # ---- Disks -----------------------------------------------------------
     _, dg, dc = make_group("Disks")
@@ -2924,6 +3068,7 @@ def run_settings():
         new["location"] = loc_state["data"]
         new["units"] = units_combo.get_active_id() or "c"
         new["sections"] = {k: cb.get_active() for k, cb in checks.items()}
+        new["order"] = list(full_order)
         dsel = [mp for mp, cb in disk_checks.items() if cb.get_active()]
         new["disks"] = dsel or None
         ssel = [sid for sid, cb in sens_checks.items() if cb.get_active()]
@@ -2934,7 +3079,12 @@ def run_settings():
 
     # every control applies itself immediately — no Save button
     units_combo.connect("changed", commit)
-    for _cb in (list(checks.values()) + list(disk_checks.values())
+    def _on_section_toggle(*_):
+        _rebuild_order_rows()       # add/remove this section's row in the order list
+        commit()
+    for _cb in checks.values():
+        _cb.connect("toggled", _on_section_toggle)
+    for _cb in (list(disk_checks.values())
                 + list(sens_checks.values()) + list(periph_checks.values())):
         _cb.connect("toggled", commit)
     vmargin_spin.connect("value-changed", commit)
