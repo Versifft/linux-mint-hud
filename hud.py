@@ -1595,39 +1595,41 @@ PERSIST_EVERY = 30
 _PANEL_CACHE = {}
 
 
-def panel_bg(H):
-    """The glass panel behind the content. Depends on nothing but the height,
-    so it is built once and reused: rebuilding it per frame meant a radius-12
-    Gaussian blur over the whole 840x2232 canvas 30 times a minute for an image
-    that never changed."""
-    cached = _PANEL_CACHE.get(H)
+def panel_bg(H, width=W):
+    """The glass panel behind the content, at a given width and height. Built
+    once per (width, height) and reused — a radius-12 Gaussian blur over the
+    whole canvas is far too costly to redo every frame for an image that only
+    changes when the panel is resized."""
+    key = (width, H)
+    cached = _PANEL_CACHE.get(key)
     if cached is not None:
         return cached
 
-    panel = Image.new("RGBA", (W * SS, H * SS), (0, 0, 0, 0))
+    panel = Image.new("RGBA", (width * SS, H * SS), (0, 0, 0, 0))
     grad = Image.new("RGBA", (1, H * SS))
     gp = grad.load()
     for i in range(H * SS):
         t = i / max(1, H * SS - 1)
         gp[0, i] = (int(20 - 6 * t), int(23 - 6 * t), int(30 - 7 * t), int(208 + 18 * t))
-    grad = grad.resize((W * SS, H * SS))
-    mask = Image.new("L", (W * SS, H * SS), 0)
+    grad = grad.resize((width * SS, H * SS))
+    mask = Image.new("L", (width * SS, H * SS), 0)
     ImageDraw.Draw(mask).rounded_rectangle(
-        [0, 0, W * SS - 1, H * SS - 1], radius=18 * SS, fill=255)
+        [0, 0, width * SS - 1, H * SS - 1], radius=18 * SS, fill=255)
     panel.paste(grad, (0, 0), mask)
 
     ImageDraw.Draw(panel).rounded_rectangle(
-        [0, 0, W * SS - 1, H * SS - 1], radius=18 * SS, outline=HAIRLINE, width=max(1, SS))
+        [0, 0, width * SS - 1, H * SS - 1], radius=18 * SS, outline=HAIRLINE, width=max(1, SS))
 
     strip_h = 90 * SS
-    hl = Image.new("RGBA", (W * SS, strip_h), (0, 0, 0, 0))
+    hl = Image.new("RGBA", (width * SS, strip_h), (0, 0, 0, 0))
     ImageDraw.Draw(hl).rounded_rectangle(
-        [SS, SS, W * SS - 1 - SS, 60 * SS], radius=17 * SS, fill=(255, 255, 255, 12))
+        [SS, SS, width * SS - 1 - SS, 60 * SS], radius=17 * SS, fill=(255, 255, 255, 12))
     hl = hl.filter(ImageFilter.GaussianBlur(6 * SS))
     panel.alpha_composite(hl, (0, 0))
 
-    _PANEL_CACHE.clear()
-    _PANEL_CACHE[H] = panel
+    if len(_PANEL_CACHE) > 6:
+        _PANEL_CACHE.clear()
+    _PANEL_CACHE[key] = panel
     return panel
 
 
@@ -1799,13 +1801,20 @@ def gather_frame():
     }
 
 
-def render(frame=None, cfg=None, target_h=None, flex_in=0.0, write_png=False):
+def render(frame=None, cfg=None, target_h=None, flex_in=0.0, width=None, write_png=False):
     """Draw one panel's image from a gathered frame and a panel config, and
-    return (image, next_flex). Each panel picks its own sections, order, units,
-    disk/sensor/peripheral selection and vertical margin out of cfg; the flex
-    that fills the height converges over two draws and is per-panel state the
+    return (image, next_flex). The panel is drawn natively at `width` px wide
+    (default the standard width) — so the user's chosen width never scales the
+    content and never couples to it — with the flex fill taking the height to
+    `target_h`. Each panel picks its own sections, order, units and selections
+    out of cfg; the flex converges over two draws and is per-panel state the
     caller keeps."""
     global FLEX, FLEX_POINTS
+    # Local width so the whole draw (and its helpers, which take explicit
+    # coordinates) works at any panel width; PAD stays fixed, so a wider panel
+    # spreads its content out rather than magnifying it.
+    W = int(width) if width else globals()["W"]
+    CW = W - 2 * PAD
     M = frame if frame is not None else gather_frame()
     _s = load_settings()
     cfg = cfg or {}
@@ -2234,7 +2243,7 @@ def render(frame=None, cfg=None, target_h=None, flex_in=0.0, write_png=False):
         # stays native, so toggling sections never changes it.
         next_flex = max(FLEX_MIN, min(FLEX_MAX, (target - natural) / FLEX_POINTS))
 
-    panel = panel_bg(H)
+    panel = panel_bg(H, W)
 
     out = Image.alpha_composite(panel, img.crop((0, 0, W * SS, H * SS)))
     out = out.resize((W, H), Image.BOX)
@@ -2431,10 +2440,11 @@ def run_window(interval=2.0):
         return x, y
 
     def scaled_for(pw, cfg):
-        """Scale the panel's native frame to its box width — the width the user
-        set, never the content — so toggling sections changes only the height.
-        Height follows the same uniform scale; the guard only keeps a panel from
-        running past the bottom of its monitor."""
+        """The frame is rendered natively at the panel's box width, so at rest
+        this returns it unchanged (crisp, no scaling — width and height are both
+        the user's, set independently). It only rescales for the live grip
+        preview (the frame is re-rendered at the new width on release) and as an
+        off-screen guard so a panel can't run past the bottom of its monitor."""
         img = pw["state"].get("img")
         if img is None:
             return None
@@ -2442,24 +2452,18 @@ def run_window(interval=2.0):
         x, y, bw, bh, m = eff_margins(pw, cfg, wa)
         maxh = wa.height - m["top"] - 2
         if pw["state"].get("resizing"):
-            # Live feedback while the grip is dragged: one cheap *uniform* rescale
-            # to the box width (no re-render, and no distortion — the grip keeps
-            # the aspect, so the height comes out right). The next tick re-renders
-            # it crisply.
+            # Live feedback: one cheap uniform rescale of the current frame to
+            # the live box width (re-rendered crisply on release).
             k = bw / img.width
             w, h = max(120, round(img.width * k)), max(80, round(img.height * k))
             if h > maxh > 0:
                 k2 = maxh / h
                 w, h = max(120, round(w * k2)), max(80, round(h * k2))
             return img.resize((w, h), Image.BILINEAR)
-        k = bw / img.width
-        w, h = max(120, round(img.width * k)), max(80, round(img.height * k))
-        if h > maxh > 0:
-            k2 = maxh / h
-            w, h = max(120, round(w * k2)), max(80, round(h * k2))
-        if (w, h) == (img.width, img.height):
-            return img
-        return img.resize((w, h), Image.LANCZOS)
+        if img.height > maxh > 0:                 # off-screen guard only
+            k = maxh / img.height
+            return img.resize((max(120, round(img.width * k)), maxh), Image.LANCZOS)
+        return img
 
     def paint(pw, cfg):
         """Rebuild a panel's surface from its own current frame at its scale."""
@@ -2470,13 +2474,6 @@ def run_window(interval=2.0):
         st["surface"], st["buf"] = surface_from(dimg)
         st["w"], st["h"] = dimg.width, dimg.height
         return dimg
-
-    def _native_target(pw, cfg):
-        """The native (pre-scale) height to render so that, scaled to the box
-        width, the panel fills the box height."""
-        wa = monitor_of(cfg).get_workarea()
-        x, y, bw, bh, m = eff_margins(pw, cfg, wa)
-        return max(120, bh * W / bw)
 
     def setup(pw):
         win, st = pw["win"], pw["state"]
@@ -2664,9 +2661,9 @@ def run_window(interval=2.0):
         """Render each panel's own frame from a single metric sample. The
         panels differ only in their display config, so the metrics are gathered
         once (running the sampler per panel would zero the rate deltas). Each
-        panel is rendered to the native height that, scaled to its box width,
-        fills its box height; it keeps its own flex, which converges over two
-        passes, so a settings change asks for passes=2. Touches no windows."""
+        panel is rendered natively at its box width and height — no scaling — so
+        it stays crisp at any size; it keeps its own flex, which converges over
+        two passes, so a settings change asks for passes=2. Touches no windows."""
         # While a panel is actively dragged, skip the whole refresh — gathering
         # metrics and rendering is heavy enough to hitch the drag. The live
         # feedback runs off the last frame; the metrics resume on release.
@@ -2678,10 +2675,11 @@ def run_window(interval=2.0):
         for i, pw in enumerate(panels):
             st = pw["state"]
             cfg = cfgs[i] if i < len(cfgs) else {}
-            tnative = _native_target(pw, cfg)
+            wa = monitor_of(cfg).get_workarea()
+            x, y, bw, bh, m = eff_margins(pw, cfg, wa)
             img, fl = st.get("img"), st.get("flex", 0.0)
             for _ in range(max(1, passes)):
-                img, fl = render(frame=M, cfg=cfg, target_h=tnative, flex_in=fl)
+                img, fl = render(frame=M, cfg=cfg, width=bw, target_h=bh, flex_in=fl)
             st["img"], st["flex"] = img, fl
 
     def tick(passes=1):
