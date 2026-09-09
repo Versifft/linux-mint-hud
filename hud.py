@@ -2917,30 +2917,34 @@ def run_settings():
     order_list.set_selection_mode(Gtk.SelectionMode.NONE)
     _cls(order_list, "order-list")
     ROW_TARGET = [Gtk.TargetEntry.new("HUD_ROW", Gtk.TargetFlags.SAME_APP, 0)]
-    drag_src = {"row": None}
+    drag_src = {"key": None}
 
-    def _on_drag_begin(row, ctx):
-        drag_src["row"] = row
-        row.get_style_context().add_class("dragging")
+    # The drag source/target sits on an EventBox inside each row, not on the
+    # GtkListBoxRow itself: the list box claims the row's button-press for its
+    # own selection handling, so a source set on the row never sees the motion
+    # that would start a drag. The EventBox is a child with its own window and
+    # gets the press first.
+    def _on_drag_begin(widget, ctx):
+        drag_src["key"] = widget.key
+        widget.row.get_style_context().add_class("dragging")
 
-    def _on_drag_end(row, ctx):
-        row.get_style_context().remove_class("dragging")
-        drag_src["row"] = None
+    def _on_drag_end(widget, ctx):
+        widget.row.get_style_context().remove_class("dragging")
+        drag_src["key"] = None
 
-    def _on_drag_get(row, ctx, sel, info, t):
-        sel.set(sel.get_target(), 8, b"\x00")
+    def _on_drag_get(widget, ctx, sel, info, t):
+        sel.set(sel.get_target(), 8, widget.key.encode())
 
-    def _on_drag_received(dest_row, ctx, x, y, sel, info, t):
-        src = drag_src["row"]
-        if src is None or src is dest_row:
+    def _on_drag_received(dest, ctx, x, y, sel, info, t):
+        sk, dk = drag_src["key"], dest.key
+        if not sk or sk == dk:
             return
-        sk, dk = src.key, dest_row.key
         vis = _visible_keys()
         if sk not in vis or dk not in vis:
             return
         vis.remove(sk)
         dest_i = vis.index(dk)
-        if y > dest_row.get_allocated_height() / 2:
+        if y > dest.get_allocated_height() / 2:
             dest_i += 1
         vis.insert(dest_i, sk)
         it = iter(vis)
@@ -2951,6 +2955,9 @@ def run_settings():
     def _make_order_row(key):
         row = Gtk.ListBoxRow()
         row.key = key
+        ev = Gtk.EventBox()
+        ev.key = key
+        ev.row = row
         hb = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=11)
         hb.set_margin_start(4)
         hb.set_margin_end(4)
@@ -2958,13 +2965,14 @@ def run_settings():
         hb.set_margin_bottom(5)
         hb.pack_start(_cls(Gtk.Label(label="≡"), "hint"), False, False, 0)
         hb.pack_start(Gtk.Label(label=SECTION_LABELS.get(key, key), xalign=0), True, True, 0)
-        row.add(hb)
-        row.drag_source_set(Gdk.ModifierType.BUTTON1_MASK, ROW_TARGET, Gdk.DragAction.MOVE)
-        row.drag_dest_set(Gtk.DestDefaults.ALL, ROW_TARGET, Gdk.DragAction.MOVE)
-        row.connect("drag-begin", _on_drag_begin)
-        row.connect("drag-end", _on_drag_end)
-        row.connect("drag-data-get", _on_drag_get)
-        row.connect("drag-data-received", _on_drag_received)
+        ev.add(hb)
+        row.add(ev)
+        ev.drag_source_set(Gdk.ModifierType.BUTTON1_MASK, ROW_TARGET, Gdk.DragAction.MOVE)
+        ev.drag_dest_set(Gtk.DestDefaults.ALL, ROW_TARGET, Gdk.DragAction.MOVE)
+        ev.connect("drag-begin", _on_drag_begin)
+        ev.connect("drag-end", _on_drag_end)
+        ev.connect("drag-data-get", _on_drag_get)
+        ev.connect("drag-data-received", _on_drag_received)
         return row
 
     def _visible_keys():
