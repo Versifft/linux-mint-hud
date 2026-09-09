@@ -2540,6 +2540,27 @@ def run_window(interval=2.0):
         st["enter_move"], st["exit_move"] = enter_move, exit_move
         drag = st["drag"]
 
+        def _resize_render():
+            """Debounced during a grip drag: re-render this panel natively at its
+            live box so the stretched cairo preview snaps crisp when the drag
+            pauses. Cheap enough off the last frame, and only fires between
+            motions."""
+            drag["rr"] = None
+            if not st.get("resizing"):
+                return False
+            cfg = _cfg_of()
+            wa = monitor_of(cfg).get_workarea()
+            x, y, bw, bh, m = eff_margins(pw, cfg, wa)
+            M = last_frame[0] if last_frame[0] is not None else gather_frame()
+            img, fl = st.get("img"), st.get("flex", 0.0)
+            for _ in range(2):
+                img, fl = render(frame=M, cfg=cfg, width=int(bw), target_h=int(bh), flex_in=fl)
+            st["img"], st["flex"] = img, fl
+            paint(pw, cfg)
+            win.set_size_request(st["w"], st["h"])
+            win.queue_draw()
+            return False
+
         def on_press(_w, ev):
             if not st.get("moving"):
                 return False
@@ -2561,32 +2582,33 @@ def run_window(interval=2.0):
             if not (st.get("moving") and drag["active"]):
                 return False
             if drag.get("mode") == "resize":
-                # bottom-right grip: an aspect-locked resize. Both the horizontal
-                # and vertical drag feed one uniform scale, so the panel grows or
-                # shrinks without distortion; the four number fields are there for
-                # independent per-edge tuning.
+                # bottom-right grip: free resize. The horizontal drag sets the
+                # width, the vertical drag the height, independently — drag one
+                # axis for wider/narrower or taller/shorter.
                 m0, wa = drag["m0"], drag["wa"]
                 sw0, sh0 = drag["sw0"], drag["sh0"]
                 dx, dy = ev.x_root - drag["sx"], ev.y_root - drag["sy"]
-                k = max(0.2, ((sw0 + dx) / sw0 + (sh0 + dy) / sh0) / 2)
-                new_sw = min(max(160, sw0 * k), wa.width - m0["left"])
-                new_sh = min(max(120, sh0 * k), wa.height - m0["top"])
+                new_sw = min(max(160, int(sw0 + dx)), wa.width - m0["left"])
+                new_sh = min(max(120, int(sh0 + dy)), wa.height - m0["top"])
                 new_right = int(wa.width - m0["left"] - new_sw)
                 new_bottom = int(wa.height - m0["top"] - new_sh)
                 live_box[0] = {"idx": pw["idx"],
                                "margins": {**m0, "right": new_right, "bottom": new_bottom}}
                 st["resizing"] = True
-                # No re-render and no Pillow rescale per motion: just resize the
-                # window to the preview size and let on_draw scale the existing
-                # surface with cairo (fast). Re-rendered crisply on release.
-                pw_w, pw_h = int(new_sw), int(new_sh)
-                st["w"], st["h"] = pw_w, pw_h
-                win.set_size_request(pw_w, pw_h)
+                # Per motion: just resize the window and let cairo scale the
+                # existing surface (fast, but stretched on one axis). A short
+                # debounce then re-renders it natively at the new box, so it
+                # snaps crisp and un-stretched whenever the drag pauses.
+                st["w"], st["h"] = new_sw, new_sh
+                win.set_size_request(new_sw, new_sh)
                 gw = win.get_window()
                 if gw is not None:              # keep the whole grip area clickable
                     gw.input_shape_combine_region(
-                        cairo.Region(cairo.RectangleInt(0, 0, pw_w, pw_h)), 0, 0)
+                        cairo.Region(cairo.RectangleInt(0, 0, new_sw, new_sh)), 0, 0)
                 win.queue_draw()
+                if drag.get("rr"):
+                    GLib.source_remove(drag["rr"])
+                drag["rr"] = GLib.timeout_add(80, _resize_render)
             else:
                 nx = int(drag["wx"] + (ev.x_root - drag["sx"]))
                 ny = int(drag["wy"] + (ev.y_root - drag["sy"]))
@@ -2607,6 +2629,9 @@ def run_window(interval=2.0):
             if drag.get("mode") == "resize":
                 # lock in the resized box (its left/top were fixed, right/bottom
                 # moved) — the width is now the user's, set by left+right.
+                if drag.get("rr"):
+                    GLib.source_remove(drag["rr"])
+                    drag["rr"] = None
                 if live_box[0] is not None:
                     pcfg.update(live_box[0]["margins"])
                     live_box[0] = None
@@ -2767,7 +2792,7 @@ def run_settings():
     up the saved file within a second."""
     import gi
     gi.require_version("Gtk", "3.0")
-    from gi.repository import Gtk, Gdk
+    from gi.repository import Gtk, Gdk, GLib
     import urllib.parse
     import urllib.request
 
@@ -3379,9 +3404,7 @@ def run_settings():
         cfgs = [dict(c) for c in (new.get("panels") or [{}])]
         while len(cfgs) <= editing[0]:
             cfgs.append({"monitor": 0})
-        pcfg = dict(cfgs[editing[0]])
-        for _k, _sp in margin_spins.items():
-            pcfg[_k] = int(_sp.get_value())
+        pcfg = dict(cfgs[editing[0]])       # keeps the on-disk margins as they are
         pcfg["units"] = units_combo.get_active_id() or "c"
         pcfg["sections"] = {k: cb.get_active() for k, cb in checks.items()}
         pcfg["order"] = list(full_order)
@@ -3394,6 +3417,25 @@ def run_settings():
         cfgs[editing[0]] = pcfg
         new["panels"] = cfgs
         save_settings(new)
+        _own_stamp[0] = _file_stamp()      # remember our own write (see watcher)
+
+    def commit_margins(*_):
+        # The four margin spinners write only the margins, onto the panel's
+        # current on-disk config — so a section toggle never clobbers a
+        # hand-dragged position, and vice versa.
+        if _loading[0]:
+            return
+        new = dict(load_settings())
+        cfgs = [dict(c) for c in (new.get("panels") or [{}])]
+        while len(cfgs) <= editing[0]:
+            cfgs.append({"monitor": 0})
+        pcfg = dict(cfgs[editing[0]])
+        for _k, _sp in margin_spins.items():
+            pcfg[_k] = int(_sp.get_value())
+        cfgs[editing[0]] = pcfg
+        new["panels"] = cfgs
+        save_settings(new)
+        _own_stamp[0] = _file_stamp()
 
     _sens_paths = {se["id"]: se["path"] for se in sensors}
 
@@ -3448,8 +3490,30 @@ def run_settings():
     for _cb in (list(disk_checks.values()) + list(periph_checks.values())):
         _cb.connect("toggled", commit)
     for _sp in margin_spins.values():
-        _sp.connect("value-changed", commit)
+        _sp.connect("value-changed", commit_margins)
     close.connect("clicked", lambda *_: win.close())
+
+    def _file_stamp():
+        try:
+            with open(SETTINGS_FILE, "rb") as f:
+                return hash(f.read())
+        except OSError:
+            return None
+
+    _own_stamp = [_file_stamp()]
+
+    def _watch_external():
+        # If settings.json changed underneath us — the panel saving a hand-drag
+        # or grip resize — reload the edited panel's controls, so a later edit
+        # doesn't write the stale margins back over the new position/size.
+        cur = _file_stamp()
+        if cur != _own_stamp[0]:
+            _own_stamp[0] = cur
+            _refill_combo()
+            load_panel()
+            refresh_move_labels()
+        return True
+    GLib.timeout_add(400, _watch_external)
 
     _refill_combo()
     refresh_move_labels()
