@@ -2419,8 +2419,8 @@ def run_settings():
 
     Gtk.Settings.get_default().set_property("gtk-application-prefer-dark-theme", True)
     css = b"""
-    window { background-color: #101216; }
-    scrolledwindow, scrolledwindow viewport, viewport, .content { background-color: #101216; }
+    window { background-color: #000000; }
+    scrolledwindow, scrolledwindow viewport, viewport, .content { background-color: #000000; }
     label { color: #cfd6e0; font-size: 13px; }
 
     /* Header */
@@ -2515,8 +2515,8 @@ def run_settings():
     .subtle:active { background-color: rgba(255,255,255,0.08); }
 
     /* Bottom action bar */
-    .actionbar { background-color: #14161a; border-top: 1px solid #262b33; }
-    .header { background-color: #14161a; border-bottom: 1px solid #262b33; }
+    .actionbar { background-color: #000000; border-top: 1px solid #262b33; }
+    .header { background-color: #000000; border-bottom: 1px solid #262b33; }
     separator { background-color: #262b33; min-height: 1px; min-width: 1px; }
     """
     prov = Gtk.CssProvider()
