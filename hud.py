@@ -1414,6 +1414,30 @@ _SETTINGS = None
 _SETTINGS_MTIME = -1.0
 
 
+# The display settings each panel carries its own copy of (placement —
+# monitor/position/offset — is per-panel too, handled separately).
+PANEL_DISPLAY_KEYS = ("vmargin", "hmargin", "units", "disks", "sensors",
+                      "peripherals", "sections", "order")
+
+
+def normalize_order(order):
+    """A section order as a full list of known keys: drop unknown ones, append
+    any the saved order predates (a new key) in its default slot."""
+    if isinstance(order, list):
+        kept = [k for k in order if k in SECTION_ORDER]
+        seen = set(kept)
+        return kept + [k for k in SECTION_ORDER if k not in seen]
+    return list(SECTION_ORDER)
+
+
+def normalize_sections(sd):
+    """A sections on/off map with every known key present."""
+    out = {k: (k not in _DEFAULT_OFF) for k in SECTION_ORDER}
+    if isinstance(sd, dict):
+        out.update({k: bool(v) for k, v in sd.items() if k in out})
+    return out
+
+
 def load_settings():
     """Current settings merged onto the defaults, re-read whenever the file
     changes so the settings window's edits apply without a restart. A pre-
@@ -1432,30 +1456,34 @@ def load_settings():
             if isinstance(legacy, dict) and "lat" in legacy:
                 data["location"] = legacy
         s = dict(DEFAULT_SETTINGS)
-        s.update({k: v for k, v in data.items() if k != "sections"})
-        sec = dict(DEFAULT_SETTINGS["sections"])
-        if isinstance(data.get("sections"), dict):
-            sec.update(data["sections"])
-        s["sections"] = sec
-        # normalise the custom order: keep only known keys, then append any
-        # section the saved order predates (a new key) in its default slot.
-        order = data.get("order")
-        if isinstance(order, list):
-            kept = [k for k in order if k in SECTION_ORDER]
-            seen = set(kept)
-            s["order"] = kept + [k for k in SECTION_ORDER if k not in seen]
-        else:
-            s["order"] = list(SECTION_ORDER)
+        s.update({k: v for k, v in data.items() if k not in ("sections", "panels")})
+        # Top-level display config is kept as the template new panels inherit.
+        s["sections"] = normalize_sections(data.get("sections"))
+        s["order"] = normalize_order(data.get("order"))
         if "vmargin" not in data:
             s["vmargin"] = data.get("margin", 22)
         if "hmargin" not in data:
             s["hmargin"] = data.get("margin", 22)
-        # placement moved from single monitor/position/offset keys to a list of
-        # panels; migrate the old ones into panel 0 so nothing is lost.
-        if not s.get("panels"):
-            s["panels"] = [{"monitor": s.get("monitor", 0),
-                            "position": s.get("position", "top-right"),
-                            "offset": s.get("offset")}]
+        # Each panel carries its own display config; anything a panel doesn't
+        # set falls back to the top-level (legacy, pre-per-panel) values, so an
+        # old single-panel settings file migrates cleanly into panel 0. Old
+        # single monitor/position/offset keys migrate the same way.
+        tmpl = {k: s.get(k) for k in PANEL_DISPLAY_KEYS}
+        raw_panels = data.get("panels") or [{"monitor": s.get("monitor", 0),
+                                             "position": s.get("position", "top-right"),
+                                             "offset": s.get("offset")}]
+        panels = []
+        for p in raw_panels:
+            q = dict(p) if isinstance(p, dict) else {}
+            q.setdefault("monitor", 0)
+            q.setdefault("position", "top-right")
+            q.setdefault("offset", None)
+            for k in ("vmargin", "hmargin", "units", "disks", "sensors", "peripherals"):
+                q.setdefault(k, tmpl[k])
+            q["sections"] = normalize_sections(q.get("sections", tmpl["sections"]))
+            q["order"] = normalize_order(q.get("order", tmpl["order"]))
+            panels.append(q)
+        s["panels"] = panels
         _SETTINGS, _SETTINGS_MTIME = s, m
     return _SETTINGS
 
@@ -1511,11 +1539,13 @@ def panel_bg(H):
     return panel
 
 
-def render(write_png=True):
-    global HISTORY, FLEX, FLEX_POINTS, _STATE, _PERSISTED
-    _s = load_settings()
-    SECTIONS = _s["sections"]
-    UNITS = _s.get("units", "c")
+def gather_frame():
+    """Sample every metric once per tick and advance the delta/history state.
+    Returns a dict the per-panel draw reads from — the panels differ only in
+    which of these values they show, never in the values themselves, so this
+    must run exactly once per tick (the rates are deltas against the previous
+    frame; running it per panel would zero the elapsed time)."""
+    global HISTORY, _STATE, _PERSISTED
     now = time.time()
     prev = _STATE if _STATE is not None else load_json(STATE_FILE, {})
     elapsed = max(0.001, now - prev.get("t", now - 2))
@@ -1618,37 +1648,6 @@ def render(write_png=True):
                               ok_prefix="Session")
     weather_raw = cached_cmd("weather", [f"{CONF_DIR}/weather.py"], 900, ok_prefix="{")
 
-    if not HISTORY:
-        HISTORY = load_json(HISTORY_FILE, [])
-        if not isinstance(HISTORY, list):
-            HISTORY = []
-    for sample in HISTORY:
-        sample.setdefault("chg", CHG_OUT)
-    HISTORY.append({"t": round(now, 1), "cpu": round(cpu_pct, 2),
-                    "gpu": round(gpu_pct if have_gpu else 0.0, 2), "down": round(down),
-                    "up": round(up), "power": round(watts, 2),
-                    "chg_w": round(charge_w, 2),
-                    "chg": CHG_IN if bstatus == "Charging" else
-                           (CHG_OUT if bstatus == "Discharging" else CHG_IDLE)})
-    HISTORY = [s for s in HISTORY if now - s.get("t", 0) <= HIST_MAX_AGE + 5]
-
-    new_state = {
-        "t": now, "cpu_idle": idle, "cpu_total": total, "cores": cores_now, "gpu": gpu_snap,
-        "rx": rx, "tx": tx, "dr": dr, "dw": dw, "procs": proc_cur, "iface": iface,
-        "rapl_uj": rapl_uj,
-    }
-
-    FLEX = float(prev.get("flex", 0.0))
-    FLEX_POINTS = 0
-    img = Image.new("RGBA", (W * SS, 1400 * SS), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img)
-    y = 22
-    R = W - PAD
-
-    f_val    = F(MONO_MED, T_VALUE)
-    f_val_sm = F(MONO_REG, T_BODY)
-    f_big    = F(MONO_LIGHT, T_LEAD)
-
     sess = week = None
     if "Session" in claude_quota:
         try:
@@ -1670,6 +1669,82 @@ def render(write_png=True):
         except Exception:
             pass
     have_weather = weather is not None
+
+    if not HISTORY:
+        HISTORY = load_json(HISTORY_FILE, [])
+        if not isinstance(HISTORY, list):
+            HISTORY = []
+    for sample in HISTORY:
+        sample.setdefault("chg", CHG_OUT)
+    HISTORY.append({"t": round(now, 1), "cpu": round(cpu_pct, 2),
+                    "gpu": round(gpu_pct if have_gpu else 0.0, 2), "down": round(down),
+                    "up": round(up), "power": round(watts, 2),
+                    "chg_w": round(charge_w, 2),
+                    "chg": CHG_IN if bstatus == "Charging" else
+                           (CHG_OUT if bstatus == "Discharging" else CHG_IDLE)})
+    HISTORY = [s for s in HISTORY if now - s.get("t", 0) <= HIST_MAX_AGE + 5]
+
+    new_state = {
+        "t": now, "cpu_idle": idle, "cpu_total": total, "cores": cores_now, "gpu": gpu_snap,
+        "rx": rx, "tx": tx, "dr": dr, "dw": dw, "procs": proc_cur, "iface": iface,
+        "rapl_uj": rapl_uj,
+    }
+    _STATE = new_state
+    if now - _PERSISTED > PERSIST_EVERY:
+        _PERSISTED = now
+        save_json(STATE_FILE, new_state)
+        save_json(HISTORY_FILE, HISTORY)
+    return {
+        "cpu_pct": cpu_pct, "core_loads": core_loads, "gpu_pct": gpu_pct,
+        "have_gpu": have_gpu, "mem_used": mem_used, "mem_total": mem_total,
+        "swap_total": swap_total, "swap_used": swap_used, "disk_used": disk_used,
+        "disk_total": disk_total, "rd": rd, "wr": wr, "down": down, "up": up,
+        "cap": cap, "bstatus": bstatus, "batt_w": batt_w, "eta": eta, "batt_v": batt_v,
+        "watts": watts, "ac_w": ac_w, "power_src": power_src, "cpu_t": cpu_t,
+        "nvme_t": nvme_t, "wifi_t": wifi_t, "uptime": uptime, "load": load,
+        "sess": sess, "week": week, "have_claude": have_claude, "weather": weather,
+        "have_weather": have_weather, "top_cpu": top_cpu, "top_mem": top_mem,
+    }
+
+
+def render(frame=None, cfg=None, target_h=None, flex_in=0.0, write_png=False):
+    """Draw one panel's image from a gathered frame and a panel config, and
+    return (image, next_flex). Each panel picks its own sections, order, units,
+    disk/sensor/peripheral selection and vertical margin out of cfg; the flex
+    that fills the height converges over two draws and is per-panel state the
+    caller keeps."""
+    global FLEX, FLEX_POINTS
+    M = frame if frame is not None else gather_frame()
+    _s = load_settings()
+    cfg = cfg or {}
+    SECTIONS = cfg.get("sections") or _s.get("sections")
+    UNITS = cfg.get("units") or _s.get("units", "c")
+    disks_sel = cfg.get("disks", _s.get("disks"))
+    sensors_sel = cfg.get("sensors", _s.get("sensors"))
+    periph_sel_cfg = cfg.get("peripherals", _s.get("peripherals"))
+    order_cfg = cfg.get("order") or _s.get("order") or SECTION_ORDER
+    target = target_h if target_h is not None else TARGET_H
+    (cpu_pct, core_loads, gpu_pct, have_gpu, mem_used, mem_total, swap_total,
+     swap_used, disk_used, disk_total, rd, wr, down, up, cap, bstatus, batt_w,
+     eta, batt_v, watts, ac_w, power_src, cpu_t, nvme_t, wifi_t, uptime, load,
+     sess, week, have_claude, weather, have_weather, top_cpu, top_mem) = (
+        M["cpu_pct"], M["core_loads"], M["gpu_pct"], M["have_gpu"], M["mem_used"],
+        M["mem_total"], M["swap_total"], M["swap_used"], M["disk_used"],
+        M["disk_total"], M["rd"], M["wr"], M["down"], M["up"], M["cap"],
+        M["bstatus"], M["batt_w"], M["eta"], M["batt_v"], M["watts"], M["ac_w"],
+        M["power_src"], M["cpu_t"], M["nvme_t"], M["wifi_t"], M["uptime"],
+        M["load"], M["sess"], M["week"], M["have_claude"], M["weather"],
+        M["have_weather"], M["top_cpu"], M["top_mem"])
+    FLEX = float(flex_in or 0.0)
+    FLEX_POINTS = 0
+    img = Image.new("RGBA", (W * SS, 1400 * SS), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    y = 22
+    R = W - PAD
+
+    f_val    = F(MONO_MED, T_VALUE)
+    f_val_sm = F(MONO_REG, T_BODY)
+    f_big    = F(MONO_LIGHT, T_LEAD)
 
     SLOT_H = 95
     ALT_PERIOD = 8
@@ -1814,7 +1889,7 @@ def render(write_png=True):
         return y
 
     def sec_thermals(y):
-        sel = _s.get("sensors")
+        sel = sensors_sel
         if sel:
             by_id = {s["id"]: s for s in list_sensors()}
             chosen = [by_id[i] for i in sel if i in by_id][:4]
@@ -1863,7 +1938,7 @@ def render(write_png=True):
     def sec_disk(y):
         label(d, PAD, y, "disk", PINK)
         infos = []
-        for mp in (_s.get("disks") or ["/"]):
+        for mp in (disks_sel or ["/"]):
             try:
                 vfs2 = os.statvfs(mp)
                 tot = vfs2.f_blocks * vfs2.f_frsize
@@ -1969,7 +2044,7 @@ def render(write_png=True):
         return y + gap(10)
 
     def sec_devices(y):
-        periph_sel = _s.get("peripherals") or []
+        periph_sel = periph_sel_cfg or []
         if not periph_sel:
             return y
         devs = [p for p in peripheral_batteries()
@@ -2042,9 +2117,9 @@ def render(write_png=True):
         "disk": sec_disk, "network": sec_network, "power": sec_power,
         "battery": sec_battery, "devices": sec_devices, "processes": sec_processes,
     }
-    # Draw the sections in the user's chosen order (already normalised to a full
-    # list of known keys in load_settings), skipping the ones switched off.
-    for key in (_s.get("order") or SECTION_ORDER):
+    # Draw the sections in this panel's chosen order (normalised to a full list
+    # of known keys), skipping the ones switched off.
+    for key in order_cfg:
         fn = section_fns.get(key)
         if fn is not None and SECTIONS.get(key, True):
             y = fn(y)
@@ -2058,7 +2133,7 @@ def render(write_png=True):
     natural = y - FLEX_POINTS * FLEX
     next_flex = 0.0
     if FLEX_POINTS:
-        next_flex = max(0.0, min(FLEX_MAX, (TARGET_H - natural) / FLEX_POINTS))
+        next_flex = max(0.0, min(FLEX_MAX, (target - natural) / FLEX_POINTS))
 
     panel = panel_bg(H)
 
@@ -2070,14 +2145,7 @@ def render(write_png=True):
         out.save(tmp, "PNG", compress_level=1)
         os.replace(tmp, PNG_PATH)
 
-    new_state["flex"] = next_flex
-    _STATE = new_state
-    if now - _PERSISTED > PERSIST_EVERY:
-        _PERSISTED = now
-        save_json(STATE_FILE, new_state)
-        save_json(HISTORY_FILE, HISTORY)
-
-    return out
+    return out, next_flex
 
 
 def log(msg):
@@ -2208,14 +2276,12 @@ def run_window(interval=2.0):
             win.show()
 
     def place(pw, cfg, w, h):
-        global TARGET_H
         win = pw["win"]
         disp = Gdk.Display.get_default()
         mon = (disp.get_monitor(cfg.get("monitor", 0))
                or disp.get_primary_monitor() or disp.get_monitor(0))
         wa = mon.get_workarea()
-        s = load_settings()
-        vmargin, hmargin = cur_vmargin(), s.get("hmargin", 22)
+        vmargin, hmargin = cur_vmargin_for(pw, cfg), int(cfg.get("hmargin", 22))
         pos = cfg.get("position", "top-right")
         off = cfg.get("offset")
         if pos == "free" and isinstance(off, (list, tuple)) and len(off) == 2:
@@ -2240,8 +2306,9 @@ def run_window(interval=2.0):
         disp = Gdk.Display.get_default()
         mon = disp.get_monitor_at_point(x + w // 2, y + h // 2) or disp.get_primary_monitor()
         wa = mon.get_workarea()
-        s = load_settings()
-        vmargin, hmargin = s.get("vmargin", 22), s.get("hmargin", 22)
+        cfgs = load_settings().get("panels") or []
+        cfg = cfgs[pw["idx"]] if pw["idx"] < len(cfgs) else {}
+        vmargin, hmargin = int(cfg.get("vmargin", 22)), int(cfg.get("hmargin", 22))
         SNAP = 26
         sx = [wa.x + hmargin, wa.x + wa.width - w - hmargin]
         sy = [wa.y + vmargin, wa.y + wa.height - h - vmargin]
@@ -2269,35 +2336,36 @@ def run_window(interval=2.0):
                 y = t
                 break
         return x, y
-    base = {"img": None}                 # the latest native-size rendered frame
     GRIP = 30                            # size of the resize handle, in px
-    live_vmargin = [None]                # in-flight value while the grip is dragged
+    live_vmargin = [None]                # in-flight value while a grip is dragged
 
-    def cur_vmargin():
-        return live_vmargin[0] if live_vmargin[0] is not None else load_settings().get("vmargin", 22)
+    def cur_vmargin_for(pw, cfg):
+        """This panel's top/bottom margin — the live grip value while it is
+        being resized, otherwise its own saved setting."""
+        if pw is not None and pw["state"].get("resizing") and live_vmargin[0] is not None:
+            return live_vmargin[0]
+        return int(cfg.get("vmargin", 22))
 
-    def scaled_for(cfg):
-        """The frame is already flex-filled to TARGET_H, so at rest this returns
-        it unchanged (native width). It rescales only to give live feedback
-        while the grip is dragged (the fill target has changed but the frame is
-        re-rendered on the next tick), and to keep a second panel on a shorter
-        monitor from overflowing."""
-        img = base["img"]
+    def scaled_for(pw, cfg):
+        """The panel's own frame is already flex-filled to its target height, so
+        at rest this returns it unchanged (native width). It only rescales to
+        give live feedback while the grip is dragged, and to keep a panel on a
+        shorter monitor from overflowing."""
+        img = pw["state"].get("img")
         if img is None:
             return None
         disp = Gdk.Display.get_default()
         mon = (disp.get_monitor(cfg.get("monitor", 0))
                or disp.get_primary_monitor() or disp.get_monitor(0))
         wa_h = mon.get_workarea().height
-        target = max(140, wa_h - 2 * cur_vmargin())
-        # Never scale *up*: the frame is already flex-filled to native width, so
-        # upscaling here would only widen it (e.g. during the tick or two the
-        # flex takes to converge after a section is toggled). Downscaling is
-        # kept — it fits the frame when the content is taller than the target
-        # (a very large vmargin, or a shorter second monitor).
+        vm = cur_vmargin_for(pw, cfg)
+        target = max(140, wa_h - 2 * vm)
+        # Never scale *up* (that would only widen the panel); downscale to fit
+        # when the content is taller than the target (a large vmargin, or a
+        # shorter monitor).
         k = min(1.0, target / img.height)
         w, h = max(80, round(img.width * k)), max(80, round(img.height * k))
-        maxh = wa_h - max(4, cur_vmargin())
+        maxh = wa_h - max(4, vm)
         if h > maxh > 0:
             k2 = maxh / h
             w, h = max(80, round(w * k2)), max(80, round(h * k2))
@@ -2306,8 +2374,8 @@ def run_window(interval=2.0):
         return img.resize((w, h), Image.LANCZOS)
 
     def paint(pw, cfg):
-        """Rebuild a panel's surface from the current frame at its scale."""
-        dimg = scaled_for(cfg)
+        """Rebuild a panel's surface from its own current frame at its scale."""
+        dimg = scaled_for(pw, cfg)
         if dimg is None:
             return None
         st = pw["state"]
@@ -2384,7 +2452,7 @@ def run_window(interval=2.0):
             w, h = win.get_allocated_width(), win.get_allocated_height()
             if ev.x >= w - GRIP - 8 and ev.y >= h - GRIP - 8:
                 drag["mode"] = "resize"
-                drag["svm"] = cur_vmargin()
+                drag["svm"] = cur_vmargin_for(pw, _cfg_of())
             else:
                 drag["mode"] = "move"
                 drag["wx"], drag["wy"] = win.get_position()
@@ -2420,9 +2488,10 @@ def run_window(interval=2.0):
             cfgs = [dict(c) for c in (s.get("panels") or [])]
             while len(cfgs) <= pw["idx"]:
                 cfgs.append({"monitor": 0, "position": "top-right", "offset": None})
+            pcfg = dict(cfgs[pw["idx"]])
             if drag.get("mode") == "resize":
                 if live_vmargin[0] is not None:
-                    s["vmargin"] = int(live_vmargin[0])
+                    pcfg["vmargin"] = int(live_vmargin[0])
                     live_vmargin[0] = None
                 st["resizing"] = False
             else:
@@ -2433,21 +2502,23 @@ def run_window(interval=2.0):
                 mon = (disp.get_monitor_at_point(wx + ww // 2, wy + (st["h"] or 0) // 2)
                        or disp.get_primary_monitor())
                 wa = mon.get_workarea()
-                vmargin, hmargin = s.get("vmargin", 22), s.get("hmargin", 22)
+                vmargin, hmargin = int(pcfg.get("vmargin", 22)), int(pcfg.get("hmargin", 22))
                 mi = mon_index(disp, mon)
                 # dropped in a corner (the snap put it exactly on the margins) ->
                 # anchor to that corner, so the margins then control its gaps.
-                # Otherwise keep the exact spot as a free offset.
+                # Otherwise keep the exact spot as a free offset. Either way the
+                # panel's display config (sections, order, units…) is preserved.
                 left = abs(wx - (wa.x + hmargin)) <= 6
                 right = abs((wx + ww) - (wa.x + wa.width - hmargin)) <= 6
                 top = abs(wy - (wa.y + vmargin)) <= 6
                 bottom = abs((wy + wh) - (wa.y + wa.height - vmargin)) <= 6
                 if (left or right) and (top or bottom):
                     pos = ("bottom" if bottom else "top") + ("-right" if right else "-left")
-                    cfgs[pw["idx"]] = {"monitor": mi, "position": pos, "offset": None}
+                    pcfg.update({"monitor": mi, "position": pos, "offset": None})
                 else:
-                    cfgs[pw["idx"]] = {"monitor": mi, "position": "free",
-                                       "offset": [wx - wa.x, wy - wa.y]}
+                    pcfg.update({"monitor": mi, "position": "free",
+                                 "offset": [wx - wa.x, wy - wa.y]})
+            cfgs[pw["idx"]] = pcfg
             # stay in move mode after a drag: the settings' "Save position"
             # button (which clears settings["move"]) is what ends it, so the
             # user can nudge or resize repeatedly first.
@@ -2473,6 +2544,7 @@ def run_window(interval=2.0):
         while len(panels) < n:
             pw = {"win": make_window(), "idx": len(panels), "closing": False,
                   "state": {"surface": None, "buf": None, "h": 0, "moving": False,
+                            "img": None, "flex": 0.0,
                             "drag": {"active": False, "sx": 0, "sy": 0, "wx": 0, "wy": 0},
                             "placekey": None}}
             setup(pw)
@@ -2483,38 +2555,45 @@ def run_window(interval=2.0):
             pw["closing"] = True
             pw["win"].destroy()
 
-    def render_frame():
-        """Set the fill target for the current settings and render one frame
-        into base["img"]. Touches no windows — call it twice to let the flex
-        fill converge (the first pass computes the exact gap stretch, the
-        second applies it) before applying the result."""
-        global TARGET_H
-        s = load_settings()
-        cfgs = s.get("panels") or [{"monitor": 0, "position": "top-right", "offset": None}]
-        # fill height = the first panel's monitor minus the two vertical margins
-        disp0 = Gdk.Display.get_default()
-        m0 = (disp0.get_monitor(cfgs[0].get("monitor", 0))
-              or disp0.get_primary_monitor() or disp0.get_monitor(0))
-        TARGET_H = max(200, m0.get_workarea().height - 2 * cur_vmargin())
-        base["img"] = render(write_png=False)   # flex-filled to TARGET_H at native width
+    DEFAULT_CFG = {"monitor": 0, "position": "top-right", "offset": None}
+
+    def render_all(passes=1):
+        """Render each panel's own frame from a single metric sample. The
+        panels differ only in their display config, so the metrics are gathered
+        once (running the sampler per panel would zero the rate deltas); each
+        panel keeps its own flex, whose fill converges over two passes, so a
+        settings change asks for passes=2. Touches no windows."""
+        M = gather_frame()
+        cfgs = load_settings().get("panels") or [DEFAULT_CFG]
+        disp = Gdk.Display.get_default()
+        for i, pw in enumerate(panels):
+            st = pw["state"]
+            cfg = cfgs[i] if i < len(cfgs) else {}
+            mon = (disp.get_monitor(cfg.get("monitor", 0))
+                   or disp.get_primary_monitor() or disp.get_monitor(0))
+            target = max(200, mon.get_workarea().height - 2 * cur_vmargin_for(pw, cfg))
+            img, fl = st.get("img"), st.get("flex", 0.0)
+            for _ in range(max(1, passes)):
+                img, fl = render(frame=M, cfg=cfg, target_h=target, flex_in=fl)
+            st["img"], st["flex"] = img, fl
 
     def tick(passes=1):
         try:
-            # Converge the flex fill first (see render_frame), so the panel is
-            # sized and placed exactly once, at its final size. Rendering twice
-            # and placing twice would make the window manager briefly show the
-            # first, un-converged size — the visible jump on section toggles.
-            for _ in range(max(1, passes)):
-                render_frame()
             s = load_settings()
-            cfgs = s.get("panels") or [{"monitor": 0, "position": "top-right", "offset": None}]
+            cfgs = s.get("panels") or [DEFAULT_CFG]
             sync_count(max(1, len(cfgs)))
+            for i, pw in enumerate(panels):
+                pw["idx"] = i
+            # Render each panel's frame before placing it. The flex fill
+            # converges over two passes, so a settings change (passes=2) sizes
+            # and places each panel exactly once, at its final size — no visible
+            # jump.
+            render_all(passes)
             move_idx = s.get("move")
             if move_idx is True:
                 move_idx = 0
             for i, pw in enumerate(panels):
                 st = pw["state"]
-                pw["idx"] = i
                 cfg = cfgs[i] if i < len(cfgs) else {}
                 if move_idx == i and not st.get("moving"):
                     st["enter_move"]()
@@ -2524,7 +2603,7 @@ def run_window(interval=2.0):
                     paint(pw, cfg)
                 if not st.get("moving"):
                     key = (st.get("w"), st.get("h"), cfg.get("monitor"), cfg.get("position"),
-                           s.get("vmargin"), s.get("hmargin"), tuple(cfg.get("offset") or ()))
+                           cfg.get("vmargin"), cfg.get("hmargin"), tuple(cfg.get("offset") or ()))
                     if key != st.get("placekey"):
                         st["placekey"] = key
                         place(pw, cfg, st["w"], st["h"])
@@ -2764,95 +2843,139 @@ def run_settings():
             grid.attach(widget, 0, counter[0], 2, 1)
         counter[0] += 1
 
-    # ---- Placement -------------------------------------------------------
-    pbox, pg, pc = make_group("Placement")
+    # ---- Panels ----------------------------------------------------------
+    # Each panel is edited on its own. Pick it here and every control below
+    # (margins, sections, order, disks, sensors, unit) reads and writes that
+    # one panel's config; placement (move/resize) already acts per panel.
+    pbox, pg, pc = make_group("Panels")
     disp = Gdk.Display.get_default()
-    panels_now = s.get("panels") or [{}]
+    editing = [0]                 # index of the panel the controls are bound to
+    _loading = [False]            # True while load_panel() sets the controls
 
-    LBL = {0: "Move panel…", 1: "Move second panel…"}
-    # The move actions read as one cluster of contained buttons; "Reset
-    # positions" sits under them as a quiet, borderless secondary action.
-    place_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=9)
-
-    move1 = _cls(Gtk.Button(label=LBL[0]), "ghost")
-    move1.set_halign(Gtk.Align.START)
-    move1.set_size_request(240, -1)
-    place_box.pack_start(move1, False, False, 0)
-
-    second_chk = Gtk.CheckButton(label="Second panel (drag it to another monitor)")
-    second_chk.set_active(len(panels_now) >= 2)
-    place_box.pack_start(second_chk, False, False, 0)
-
-    move2 = _cls(Gtk.Button(label=LBL[1]), "ghost")
-    move2.set_halign(Gtk.Align.START)
-    move2.set_size_request(240, -1)
-    move2.set_no_show_all(True)                 # only shown when a second panel exists
-    move2.set_visible(len(panels_now) >= 2)
-    place_box.pack_start(move2, False, False, 0)
-
-    reset_btn = _cls(Gtk.Button(label="Reset positions"), "subtle")
-    reset_btn.set_halign(Gtk.Align.START)
-    place_box.pack_start(reset_btn, False, False, 0)
-
-    pbox.pack_start(place_box, False, False, 0)
-    pbox.reorder_child(place_box, 1)            # sit above the edge-margin row
+    def _panels():
+        return [dict(c) for c in (load_settings().get("panels") or [{}])]
 
     def _nmon():
         return disp.get_n_monitors()
 
+    panel_combo = _noscroll(Gtk.ComboBoxText())
+
+    def _refill_combo():
+        n = max(1, len(_panels()))
+        editing[0] = max(0, min(editing[0], n - 1))
+        panel_combo.handler_block(panel_combo._h)
+        panel_combo.remove_all()
+        for i in range(n):
+            panel_combo.append(str(i), f"Panel {i + 1}")
+        panel_combo.set_active_id(str(editing[0]))
+        panel_combo.handler_unblock(panel_combo._h)
+
+    panel_combo.set_hexpand(False)
+    panel_combo.set_halign(Gtk.Align.START)
+    panel_combo.set_size_request(160, -1)
+    field(pg, pc, "Edit panel", panel_combo)
+
+    add_btn = _cls(Gtk.Button(label="Add"), "subtle")
+    dup_btn = _cls(Gtk.Button(label="Duplicate"), "subtle")
+    del_btn = _cls(Gtk.Button(label="Remove"), "subtle")
+    btnrow = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+    for _b in (add_btn, dup_btn, del_btn):
+        btnrow.pack_start(_b, False, False, 0)
+    field(pg, pc, "", btnrow)
+
+    move1 = _cls(Gtk.Button(label="Move panel…"), "ghost")
+    move1.set_halign(Gtk.Align.START)
+    move1.set_size_request(240, -1)
+    reset_btn = _cls(Gtk.Button(label="Reset positions"), "subtle")
+    reset_btn.set_halign(Gtk.Align.START)
+    place_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=9)
+    place_box.pack_start(move1, False, False, 0)
+    place_box.pack_start(reset_btn, False, False, 0)
+    field(pg, pc, "", place_box)
+
     def refresh_move_labels():
         mv = load_settings().get("move")
-        move1.set_label("Save position" if mv == 0 else LBL[0])
-        move2.set_label("Save position" if mv == 1 else LBL[1])
+        move1.set_label("Save position" if mv == editing[0] else "Move panel…")
 
-    def toggle_move(idx):
+    def toggle_move(*_):
+        idx = editing[0]
         st = dict(load_settings())
-        if st.get("move") == idx:                 # second click on the same button
+        if st.get("move") == idx:                 # second click -> save & stop
             st["move"] = None
             save_settings(st)
             status.set_text("Position saved.")
         else:
-            cfgs = [dict(c) for c in (st.get("panels") or [])] or [{"monitor": 0, "position": "top-right", "offset": None}]
-            while len(cfgs) <= idx:
-                cfgs.append({"monitor": 1 if _nmon() > 1 else 0, "position": "top-right", "offset": None})
-            st["panels"] = cfgs
             st["move"] = idx
             save_settings(st)
             status.set_text("Drag the panel (its corner grip resizes). Click “Save position” when done.")
         refresh_move_labels()
 
-    def set_two(active):
+    def do_add(dup):
         st = dict(load_settings())
-        cfgs = [dict(c) for c in (st.get("panels") or [])] or [{"monitor": 0, "position": "top-right", "offset": None}]
-        if active and len(cfgs) < 2:
-            cfgs.append({"monitor": 1 if _nmon() > 1 else 0, "position": "top-right", "offset": None})
-        st["panels"] = cfgs[:2] if active else cfgs[:1]
-        if not active and st.get("move") == 1:
-            st["move"] = None
+        cfgs = [dict(c) for c in (st.get("panels") or [{}])]
+        src = cfgs[editing[0]] if editing[0] < len(cfgs) else cfgs[0]
+        new = dict(src)                           # inherit the display config
+        if not dup:                               # a plain Add resets placement
+            new["position"], new["offset"] = "top-left", None
+        new["monitor"] = 1 if _nmon() > 1 else new.get("monitor", 0)
+        cfgs.append(new)
+        editing[0] = len(cfgs) - 1
+        st["panels"] = cfgs
         save_settings(st)
-        move2.set_visible(active)
+        _refill_combo()
+        load_panel()
         refresh_move_labels()
+        status.set_text(("Duplicated" if dup else "Added")
+                        + f" — {len(cfgs)} panels. Use “Move panel…” to place it.")
+
+    def do_remove(*_):
+        st = dict(load_settings())
+        cfgs = [dict(c) for c in (st.get("panels") or [{}])]
+        if len(cfgs) <= 1:
+            status.set_text("At least one panel is needed.")
+            return
+        cfgs.pop(editing[0])
+        editing[0] = max(0, editing[0] - 1)
+        st["panels"] = cfgs
+        st["move"] = None
+        save_settings(st)
+        _refill_combo()
+        load_panel()
+        refresh_move_labels()
+        status.set_text(f"Removed — {len(cfgs)} panels.")
 
     def do_reset(_b):
         st = dict(load_settings())
-        k = max(1, len(st.get("panels") or [{}]))
-        st["panels"] = [{"monitor": 0, "position": "top-right", "offset": None} for _ in range(k)]
+        cfgs = [dict(c) for c in (st.get("panels") or [{}])]
+        for c in cfgs:
+            c["position"], c["offset"] = "top-right", None
+        st["panels"] = cfgs
         st["move"] = None
         save_settings(st)
         refresh_move_labels()
         status.set_text("Positions reset to the top-right corner.")
 
-    move1.connect("clicked", lambda *_: toggle_move(0))
-    move2.connect("clicked", lambda *_: toggle_move(1))
-    second_chk.connect("toggled", lambda cb: set_two(cb.get_active()))
-    reset_btn.connect("clicked", do_reset)
-    refresh_move_labels()
+    def _on_panel_switch(_c):
+        aid = panel_combo.get_active_id()
+        if aid is None:
+            return
+        editing[0] = int(aid)
+        load_panel()
+        refresh_move_labels()
 
+    panel_combo._h = panel_combo.connect("changed", _on_panel_switch)
+    add_btn.connect("clicked", lambda *_: do_add(False))
+    dup_btn.connect("clicked", lambda *_: do_add(True))
+    del_btn.connect("clicked", do_remove)
+    move1.connect("clicked", toggle_move)
+    reset_btn.connect("clicked", do_reset)
+
+    _P0 = (s.get("panels") or [{}])[0]
     vmargin_spin = _noscroll(Gtk.SpinButton.new_with_range(0, 400, 1))
-    vmargin_spin.set_value(s.get("vmargin", 22))
+    vmargin_spin.set_value(_P0.get("vmargin", 22))
     field(pg, pc, "Top / bottom gap", vmargin_spin)
     hmargin_spin = _noscroll(Gtk.SpinButton.new_with_range(0, 400, 1))
-    hmargin_spin.set_value(s.get("hmargin", 22))
+    hmargin_spin.set_value(_P0.get("hmargin", 22))
     field(pg, pc, "Side gap", hmargin_spin)
     for _sp in (vmargin_spin, hmargin_spin):
         _sp.set_hexpand(False)
@@ -2902,7 +3025,7 @@ def run_settings():
     checks = {}
     for idx, (key, txt) in enumerate(SECTION_DEFS):
         cb = Gtk.CheckButton(label=txt)
-        cb.set_active(s["sections"].get(key, True))
+        cb.set_active((_P0.get("sections") or {}).get(key, True))
         checks[key] = cb
         secgrid.attach(cb, idx % 2, idx // 2, 1, 1)
     field(seg, sec_, "", secgrid)
@@ -2912,7 +3035,7 @@ def run_settings():
     # order; that order drives the render top-to-bottom. Toggling a section
     # above adds or removes its row here without disturbing the rest.
     _, og, oc = make_group("Order")
-    full_order = list(s.get("order") or SECTION_ORDER)
+    full_order = list(_P0.get("order") or SECTION_ORDER)
     order_list = Gtk.ListBox()
     order_list.set_selection_mode(Gtk.SelectionMode.NONE)
     _cls(order_list, "order-list")
@@ -2990,7 +3113,7 @@ def run_settings():
 
     # ---- Disks -----------------------------------------------------------
     _, dg, dc = make_group("Disks")
-    cur_disks = s.get("disks") or ["/"]
+    cur_disks = _P0.get("disks") or ["/"]
     disk_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=7)
     disk_checks = {}
     for mp, dev in disk_mounts():
@@ -3006,13 +3129,13 @@ def run_settings():
     units_combo = _noscroll(Gtk.ComboBoxText())
     units_combo.append("c", "Celsius (°C)")
     units_combo.append("f", "Fahrenheit (°F)")
-    units_combo.set_active_id(s.get("units", "c"))
+    units_combo.set_active_id(_P0.get("units", "c"))
     field(tg, tc, "Unit", units_combo)
     units_combo.set_hexpand(False)
     units_combo.set_halign(Gtk.Align.START)
     units_combo.set_size_request(190, -1)
 
-    cur_sens = s.get("sensors") or []
+    cur_sens = _P0.get("sensors") or []
     auto_paths = {p for p in (_find_cpu_temp(), _find_disk_temp(), _find_wifi_temp()) if p}
     sens_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=7)
     sens_box.set_border_width(4)
@@ -3042,7 +3165,7 @@ def run_settings():
 
     # ---- Devices ---------------------------------------------------------
     _, deg, dec = make_group("Devices")
-    cur_periph = s.get("peripherals") or []
+    cur_periph = _P0.get("peripherals") or []
     periph_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=7)
     periph_checks = {}
     periphs = peripheral_batteries()
@@ -3070,24 +3193,63 @@ def run_settings():
     outer.pack_start(actionbar, False, False, 0)
 
     def commit(*_):
+        if _loading[0]:                      # ignore the signals load_panel() fires
+            return
         new = dict(load_settings())
-        new["vmargin"] = int(vmargin_spin.get_value())
-        new["hmargin"] = int(hmargin_spin.get_value())
-        new["location"] = loc_state["data"]
-        new["units"] = units_combo.get_active_id() or "c"
-        new["sections"] = {k: cb.get_active() for k, cb in checks.items()}
-        new["order"] = list(full_order)
+        new["location"] = loc_state["data"]  # the weather location stays shared
+        cfgs = [dict(c) for c in (new.get("panels") or [{}])]
+        while len(cfgs) <= editing[0]:
+            cfgs.append({"monitor": 0, "position": "top-right", "offset": None})
+        pcfg = dict(cfgs[editing[0]])
+        pcfg["vmargin"] = int(vmargin_spin.get_value())
+        pcfg["hmargin"] = int(hmargin_spin.get_value())
+        pcfg["units"] = units_combo.get_active_id() or "c"
+        pcfg["sections"] = {k: cb.get_active() for k, cb in checks.items()}
+        pcfg["order"] = list(full_order)
         dsel = [mp for mp, cb in disk_checks.items() if cb.get_active()]
-        new["disks"] = dsel or None
+        pcfg["disks"] = dsel or None
         ssel = [sid for sid, cb in sens_checks.items() if cb.get_active()]
-        new["sensors"] = ssel or None
+        pcfg["sensors"] = ssel or None
         psel = [pid for pid, cb in periph_checks.items() if cb.get_active()]
-        new["peripherals"] = psel or None
+        pcfg["peripherals"] = psel or None
+        cfgs[editing[0]] = pcfg
+        new["panels"] = cfgs
         save_settings(new)
+
+    _sens_paths = {se["id"]: se["path"] for se in sensors}
+
+    def load_panel():
+        """Point every display control at the currently-edited panel."""
+        cfgs = _panels()
+        pcfg = cfgs[editing[0]] if editing[0] < len(cfgs) else {}
+        _loading[0] = True
+        try:
+            vmargin_spin.set_value(pcfg.get("vmargin", 22))
+            hmargin_spin.set_value(pcfg.get("hmargin", 22))
+            units_combo.set_active_id(pcfg.get("units", "c"))
+            sec = pcfg.get("sections") or {}
+            for k, cb in checks.items():
+                cb.set_active(bool(sec.get(k, True)))
+            dsel = pcfg.get("disks") or ["/"]
+            for mp, cb in disk_checks.items():
+                cb.set_active(mp in dsel)
+            ssel = pcfg.get("sensors") or []
+            for sid, cb in sens_checks.items():
+                cb.set_active((sid in ssel) if ssel else (_sens_paths.get(sid) in auto_paths))
+            psel = pcfg.get("peripherals") or []
+            for pid, cb in periph_checks.items():
+                cb.set_active(pid in psel)
+            full_order[:] = normalize_order(pcfg.get("order"))
+            _rebuild_order_rows()
+        finally:
+            _loading[0] = False
 
     # every control applies itself immediately — no Save button
     units_combo.connect("changed", commit)
+
     def _on_section_toggle(*_):
+        if _loading[0]:
+            return
         _rebuild_order_rows()       # add/remove this section's row in the order list
         commit()
     for _cb in checks.values():
@@ -3099,6 +3261,9 @@ def run_settings():
     hmargin_spin.connect("value-changed", commit)
     close.connect("clicked", lambda *_: win.close())
 
+    _refill_combo()
+    refresh_move_labels()
+
     win.connect("destroy", Gtk.main_quit)
     win.show_all()
     Gtk.main()
@@ -3108,7 +3273,9 @@ if __name__ == "__main__":
     if "--settings" in sys.argv:
         run_settings()
     elif "--png" in sys.argv:
-        render()
+        _M = gather_frame()
+        _, _fl = render(frame=_M, write_png=False)   # settle the flex fill
+        render(frame=_M, flex_in=_fl, write_png=True)
         for _t in threading.enumerate():
             if _t is not threading.main_thread():
                 _t.join(timeout=15)
