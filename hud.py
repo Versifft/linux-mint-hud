@@ -2134,11 +2134,14 @@ def run_window(interval=2.0):
             TARGET_H = max(200, wa.height - 2 * margin)
         if pos == "free" and isinstance(off, (list, tuple)) and len(off) == 2:
             x, yy = wa.x + int(off[0]), wa.y + int(off[1])
+            # a free panel still keeps at least the edge margin from every side
+            x = max(wa.x + margin, min(x, wa.x + wa.width - w - margin))
+            yy = max(wa.y + margin, min(yy, wa.y + wa.height - h - margin))
         else:
-            x = wa.x + wa.width - w - margin
-            yy = wa.y + margin
-        x = max(wa.x, min(x, wa.x + wa.width - w))
-        yy = max(wa.y, min(yy, wa.y + wa.height - h))
+            x = wa.x + (wa.width - w - margin if pos.endswith("right") else margin)
+            yy = wa.y + (wa.height - h - margin if pos.startswith("bottom") else margin)
+            x = max(wa.x, min(x, wa.x + wa.width - w))
+            yy = max(wa.y, min(yy, wa.y + wa.height - h))
         win.set_size_request(w, h)
         win.move(x, yy)
 
@@ -2323,13 +2326,27 @@ def run_window(interval=2.0):
             else:
                 wx, wy = win.get_position()
                 ww = win.get_allocated_width() or W
+                wh = win.get_allocated_height() or (st["h"] or 0)
                 disp = Gdk.Display.get_default()
                 mon = (disp.get_monitor_at_point(wx + ww // 2, wy + (st["h"] or 0) // 2)
                        or disp.get_primary_monitor())
                 wa = mon.get_workarea()
-                cfgs[pw["idx"]] = {"monitor": mon_index(disp, mon), "position": "free",
-                                   "offset": [wx - wa.x, wy - wa.y],
-                                   "scale": cfgs[pw["idx"]].get("scale", 1.0)}
+                margin = load_settings().get("margin", MARGIN)
+                scale = cfgs[pw["idx"]].get("scale", 1.0)
+                mi = mon_index(disp, mon)
+                # dropped in a corner (the snap put it exactly at the margin) ->
+                # anchor to that corner, so the edge-margin setting then controls
+                # its gap. Otherwise keep the exact spot as a free offset.
+                left = abs(wx - (wa.x + margin)) <= 6
+                right = abs((wx + ww) - (wa.x + wa.width - margin)) <= 6
+                top = abs(wy - (wa.y + margin)) <= 6
+                bottom = abs((wy + wh) - (wa.y + wa.height - margin)) <= 6
+                if (left or right) and (top or bottom):
+                    pos = ("bottom" if bottom else "top") + ("-right" if right else "-left")
+                    cfgs[pw["idx"]] = {"monitor": mi, "position": pos, "offset": None, "scale": scale}
+                else:
+                    cfgs[pw["idx"]] = {"monitor": mi, "position": "free",
+                                       "offset": [wx - wa.x, wy - wa.y], "scale": scale}
             # stay in move mode after a drag: the settings' "Save position"
             # button (which clears settings["move"]) is what ends it, so the
             # user can nudge or resize repeatedly first.
