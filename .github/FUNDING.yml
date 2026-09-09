@@ -1,0 +1,3 @@
+# Adds the "Sponsor" button to the repo. PayPal has no first-class key here,
+# so the link goes under `custom`, which accepts any URL.
+custom: https://paypal.me/RogerWiedmer

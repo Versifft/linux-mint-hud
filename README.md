@@ -209,6 +209,12 @@ Note the `[.]` in that pattern — plain `hud.py` also matches the shell you typ
 it in, and `pkill -f` will happily kill your own terminal. Failures land in
 `cache/hud.log`.
 
+## Support
+
+It's free and always will be. If it turned out useful and you feel like it,
+you can [buy me a coffee](https://paypal.me/RogerWiedmer) ☕ — entirely
+optional, and thanks either way.
+
 ## License
 
 MIT — use it, change it, ship it, no warranty.
