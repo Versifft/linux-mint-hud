@@ -2707,9 +2707,10 @@ def run_settings():
     hmargin_spin = _noscroll(Gtk.SpinButton.new_with_range(0, 400, 1))
     hmargin_spin.set_value(s.get("hmargin", 22))
     field(pg, pc, "Side gap", hmargin_spin)
-    margin_spin.set_hexpand(False)
-    margin_spin.set_halign(Gtk.Align.START)
-    margin_spin.set_size_request(130, -1)
+    for _sp in (vmargin_spin, hmargin_spin):
+        _sp.set_hexpand(False)
+        _sp.set_halign(Gtk.Align.START)
+        _sp.set_size_request(130, -1)
 
     # ---- Weather ---------------------------------------------------------
     _, wg, wc = make_group("Weather")
