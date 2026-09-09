@@ -2069,7 +2069,7 @@ def run_window(interval=2.0):
             win.hide()
             win.show()
 
-    def place(pw, cfg, h):
+    def place(pw, cfg, w, h):
         global TARGET_H
         win = pw["win"]
         disp = Gdk.Display.get_default()
@@ -2084,11 +2084,11 @@ def run_window(interval=2.0):
         if pos == "free" and isinstance(off, (list, tuple)) and len(off) == 2:
             x, yy = wa.x + int(off[0]), wa.y + int(off[1])
         else:
-            x = wa.x + wa.width - W - margin
+            x = wa.x + wa.width - w - margin
             yy = wa.y + margin
-        x = max(wa.x, min(x, wa.x + wa.width - W))
+        x = max(wa.x, min(x, wa.x + wa.width - w))
         yy = max(wa.y, min(yy, wa.y + wa.height - h))
-        win.set_size_request(W, h)
+        win.set_size_request(w, h)
         win.move(x, yy)
 
     panels = []
@@ -2151,8 +2151,9 @@ def run_window(interval=2.0):
                 return False
             drag["active"] = False
             wx, wy = win.get_position()
+            ww = win.get_allocated_width() or W
             disp = Gdk.Display.get_default()
-            mon = (disp.get_monitor_at_point(wx + W // 2, wy + (st["h"] or 0) // 2)
+            mon = (disp.get_monitor_at_point(wx + ww // 2, wy + (st["h"] or 0) // 2)
                    or disp.get_primary_monitor())
             wa = mon.get_workarea()
             s = dict(load_settings())
@@ -2198,9 +2199,20 @@ def run_window(interval=2.0):
     def tick():
         try:
             img = render(write_png=False)
-            surf, buf = surface_from(img)
             s = load_settings()
             cfgs = s.get("panels") or [{"monitor": 0, "position": "top-right", "offset": None}]
+            # auto-fit: if the content is taller than the first panel's monitor
+            # can show, scale the whole panel down so nothing is clipped off the
+            # bottom, however much the user has switched on.
+            disp = Gdk.Display.get_default()
+            mon0 = (disp.get_monitor(cfgs[0].get("monitor", 0))
+                    or disp.get_primary_monitor() or disp.get_monitor(0))
+            usable = mon0.get_workarea().height - 2 * s.get("margin", MARGIN)
+            if img.height > usable > 0:
+                k = usable / img.height
+                img = img.resize((max(1, round(img.width * k)), max(1, round(img.height * k))),
+                                 Image.LANCZOS)
+            surf, buf = surface_from(img)
             sync_count(max(1, len(cfgs)))
             move_idx = s.get("move")
             if move_idx is True:
@@ -2215,11 +2227,11 @@ def run_window(interval=2.0):
                 elif move_idx != i and st.get("moving"):
                     st["exit_move"]()
                 if not st.get("moving"):
-                    key = (img.height, cfg.get("monitor"), cfg.get("position"),
+                    key = (img.width, img.height, cfg.get("monitor"), cfg.get("position"),
                            s.get("margin"), tuple(cfg.get("offset") or ()))
                     if key != st.get("placekey"):
                         st["placekey"] = key
-                        place(pw, cfg, img.height)
+                        place(pw, cfg, img.width, img.height)
                     keep_above_desktop(pw["win"])
                 pw["win"].queue_draw()
             tick.fails = 0
