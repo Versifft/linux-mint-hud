@@ -2253,10 +2253,12 @@ def render(frame=None, cfg=None, target_h=None, flex_in=0.0, width=None, write_p
     natural = y - FLEX_POINTS * FLEX
     next_flex = 0.0
     if FLEX_POINTS:
-        # Stretch (positive) to fill a tall work area, or compress (down to
-        # FLEX_MIN) to fit content taller than the target — either way the width
-        # stays native, so toggling sections never changes it.
-        next_flex = max(FLEX_MIN, min(FLEX_MAX, (target - natural) / FLEX_POINTS))
+        # The panel is as tall as its content: adding or removing a section
+        # grows or shrinks the window by that section. The gaps never *stretch*
+        # to fill the box height (that is the ceiling `target`); they only
+        # compress, down to FLEX_MIN, when the content would otherwise run past
+        # it. Either way the width stays native.
+        next_flex = max(FLEX_MIN, min(0.0, (target - natural) / FLEX_POINTS))
 
     panel = panel_bg(H, W)
 
