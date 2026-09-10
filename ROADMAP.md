@@ -5,8 +5,11 @@ branch — nothing here has landed on `main` yet.
 
 ## Packaging & install
 - [ ] Ship a `.deb` so it installs and uninstalls like a normal package
-- [ ] A graphical installer, not just the command-line one
-- [ ] A clean uninstaller (autostart entry, files, the udev rule, cache)
+- [x] A graphical installer, not just the command-line one (`install-gui.sh`,
+      zenity + pkexec; falls back to `install.sh` with no desktop session)
+- [x] A clean uninstaller (`uninstall.sh`, graphical + terminal): stops the
+      panel, removes autostart, menu entries and the udev rule, optionally the
+      app folder
 
 ## Configuration
 - [x] A machine-managed settings file (`settings.json`), never hand-edited
@@ -14,7 +17,8 @@ branch — nothing here has landed on `main` yet.
 - [x] Panel picks up saved settings live (no restart)
 - [x] Fold the old `weather.json` location into it (with migration)
 - [ ] Move the remaining in-code constants (sizes, colours) in too
-- [ ] Document it in the README + a menu launcher (.desktop) for the GUI
+- [x] A menu launcher (.desktop) for the settings GUI (+ install/uninstall)
+- [ ] Document it in the README
 
 ## Multi-monitor
 - [x] Choose which monitor the panel shows on

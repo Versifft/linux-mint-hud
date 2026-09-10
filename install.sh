@@ -182,6 +182,51 @@ else
 fi
 echo
 
+# ---- 5b. application menu entries ----------------------------------------
+bold "Menu entries"
+APPS="$HOME/.local/share/applications"
+info "These add 'Linux Mint HUD — Settings' (the graphical settings) and an"
+info "uninstaller to your application menu, so you don't need a terminal."
+if ask "Add menu entries?"; then
+    mkdir -p "$APPS"
+    cat > "$APPS/mint-hud-settings.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Linux Mint HUD — Settings
+Comment=Configure the desktop system panel
+Exec=$HERE/hud.py --settings
+Icon=preferences-desktop
+Terminal=false
+Categories=Settings;
+EOF
+    cat > "$APPS/mint-hud-install.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Linux Mint HUD — Install / Update
+Comment=Set up or update the desktop system panel
+Exec=$HERE/install-gui.sh
+Icon=system-software-install
+Terminal=false
+Categories=Settings;
+EOF
+    cat > "$APPS/mint-hud-uninstall.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Linux Mint HUD — Uninstall
+Comment=Remove the desktop system panel
+Exec=$HERE/uninstall.sh
+Icon=edit-delete
+Terminal=false
+Categories=Settings;
+EOF
+    chmod +x "$HERE/install-gui.sh" "$HERE/uninstall.sh" 2>/dev/null || true
+    update-desktop-database "$APPS" >/dev/null 2>&1 || true
+    ok "Menu entries added."
+else
+    info "Skipped."
+fi
+echo
+
 # ---- 6. start now --------------------------------------------------------
 if pgrep -f "hud[.]py$" >/dev/null; then
     ok "The panel is already running."

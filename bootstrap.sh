@@ -21,4 +21,7 @@ else
     git clone --depth 1 "$REPO" "$DEST"
 fi
 
-exec "$DEST/install.sh"
+chmod +x "$DEST"/*.sh "$DEST/hud.py" 2>/dev/null || true
+# Prefer the graphical installer; it falls back to the terminal one itself when
+# there's no desktop session or no zenity.
+exec "$DEST/install-gui.sh"
