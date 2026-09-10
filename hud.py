@@ -3013,13 +3013,17 @@ def run_settings():
 
     panel_combo = _noscroll(Gtk.ComboBoxText())
 
+    def _panel_label(i, p):
+        return (p.get("name") or "").strip() or f"Panel {i + 1}"
+
     def _refill_combo():
-        n = max(1, len(_panels()))
+        ps = _panels()
+        n = max(1, len(ps))
         editing[0] = max(0, min(editing[0], n - 1))
         panel_combo.handler_block(panel_combo._h)
         panel_combo.remove_all()
         for i in range(n):
-            panel_combo.append(str(i), f"Panel {i + 1}")
+            panel_combo.append(str(i), _panel_label(i, ps[i] if i < len(ps) else {}))
         panel_combo.set_active_id(str(editing[0]))
         panel_combo.handler_unblock(panel_combo._h)
 
@@ -3027,6 +3031,12 @@ def run_settings():
     panel_combo.set_halign(Gtk.Align.START)
     panel_combo.set_size_request(160, -1)
     field(pg, pc, "Edit panel", panel_combo)
+
+    name_entry = Gtk.Entry()
+    name_entry.set_placeholder_text("Panel name")
+    name_entry.set_hexpand(False)
+    name_entry.set_size_request(200, -1)
+    field(pg, pc, "Name", name_entry)
 
     add_btn = _cls(Gtk.Button(label="Add"), "subtle")
     dup_btn = _cls(Gtk.Button(label="Duplicate"), "subtle")
@@ -3454,6 +3464,25 @@ def run_settings():
         save_settings(new)
         _own_stamp[0] = _file_stamp()
 
+    def commit_name(*_):
+        # Writes only the panel's display name (onto its current on-disk config)
+        # and refreshes the picker label.
+        if _loading[0]:
+            return
+        new = dict(load_settings())
+        cfgs = [dict(c) for c in (new.get("panels") or [{}])]
+        while len(cfgs) <= editing[0]:
+            cfgs.append({"monitor": 0})
+        nm = name_entry.get_text().strip()
+        if nm:
+            cfgs[editing[0]]["name"] = nm
+        else:
+            cfgs[editing[0]].pop("name", None)
+        new["panels"] = cfgs
+        save_settings(new)
+        _own_stamp[0] = _file_stamp()
+        _refill_combo()
+
     _sens_paths = {se["id"]: se["path"] for se in sensors}
 
     def load_panel():
@@ -3465,6 +3494,7 @@ def run_settings():
             _rm = _resolved_margins(pcfg)
             for _k, _sp in margin_spins.items():
                 _sp.set_value(_rm.get(_k, 22))
+            name_entry.set_text(pcfg.get("name", "") or "")
             units_combo.set_active_id(pcfg.get("units", "c"))
             showloc_chk.set_active(bool(pcfg.get("weather_show_location", True)))
             sec = pcfg.get("sections") or {}
@@ -3486,6 +3516,7 @@ def run_settings():
             _loading[0] = False
 
     # every control applies itself immediately — no Save button
+    name_entry.connect("changed", commit_name)
     units_combo.connect("changed", commit)
     wunit_combo.connect("changed", commit)
     showloc_chk.connect("toggled", commit)
@@ -3534,8 +3565,8 @@ def run_settings():
     GLib.timeout_add(400, _watch_external)
 
     _refill_combo()
+    load_panel()                # sync every control (incl. the name field)
     refresh_move_labels()
-    rebuild_sensor_names()
 
     win.connect("destroy", Gtk.main_quit)
     win.show_all()
