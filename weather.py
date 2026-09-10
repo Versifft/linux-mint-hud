@@ -6,8 +6,10 @@ import sys
 import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SETTINGS = os.path.join(HERE, "settings.json")
-CONF = os.path.join(HERE, "weather.json")
+# Data lives per-user (the code may be installed read-only under /usr).
+DATA = os.path.join(os.path.expanduser("~"), ".config", "mint-hud")
+SETTINGS = os.path.join(DATA, "settings.json")
+CONF = os.path.join(DATA, "weather.json")
 
 WMO = {
     0: "Clear", 1: "Mainly clear", 2: "Partly cloudy", 3: "Overcast",

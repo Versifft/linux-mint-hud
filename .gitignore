@@ -15,3 +15,8 @@ weather.json
 
 # Local settings (written by the settings window); machine-specific.
 settings.json
+
+# Debian package build output
+build/
+dist/
+*.deb

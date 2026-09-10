@@ -15,7 +15,11 @@ import traceback
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
 HOME = os.path.expanduser("~")
-CONF_DIR = os.path.dirname(os.path.abspath(__file__))
+# Code can live read-only under /usr (the .deb) or in a checkout; data always
+# lives per-user under ~/.config/mint-hud. For a checkout at that path the two
+# coincide, so nothing changes there.
+CODE_DIR = os.path.dirname(os.path.abspath(__file__))
+CONF_DIR = os.path.join(HOME, ".config", "mint-hud")
 CACHE_DIR = os.path.join(CONF_DIR, "cache")
 os.makedirs(CACHE_DIR, exist_ok=True)
 
@@ -1751,10 +1755,10 @@ def gather_frame():
     uptime = read_first("/proc/uptime", lambda s: float(s.split()[0]), 0)
     load = read_first("/proc/loadavg", lambda s: s.split()[:3], ["?", "?", "?"])
 
-    claude_quota = cached_cmd("claude_quota", [f"{CONF_DIR}/claude_quota.py"], 300,
+    claude_quota = cached_cmd("claude_quota", [f"{CODE_DIR}/claude_quota.py"], 300,
                               ok_prefix="Session")
     _loc = load_settings().get("location")
-    weather_raw = cached_cmd("weather", [f"{CONF_DIR}/weather.py"], 900, ok_prefix="{",
+    weather_raw = cached_cmd("weather", [f"{CODE_DIR}/weather.py"], 900, ok_prefix="{",
                              key=json.dumps(_loc, sort_keys=True) if _loc else "none")
 
     sess = week = None

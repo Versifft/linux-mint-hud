@@ -1,0 +1,150 @@
+#!/usr/bin/env bash
+#
+# Build a .deb of linux-mint-hud that installs system-wide under /usr, so it can
+# be installed with a double-click (GDebi / Software Installer) and removed
+# through the normal package manager. Code goes read-only under /usr; each
+# user's settings/cache live in ~/.config/mint-hud.
+#
+#   ./build-deb.sh            -> dist/linux-mint-hud_<version>_all.deb
+#
+set -euo pipefail
+umask 022                      # so packaged dirs are 0755, not group-writable
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+VERSION="1.0.0"
+PKG="linux-mint-hud"
+STAGE="$HERE/build/$PKG"
+OUT="$HERE/dist"
+
+rm -rf "$HERE/build"
+mkdir -p "$STAGE" "$OUT"
+
+APPDIR="$STAGE/usr/share/mint-hud"
+BINDIR="$STAGE/usr/bin"
+DESKDIR="$STAGE/usr/share/applications"
+AUTODIR="$STAGE/etc/xdg/autostart"
+DOCDIR="$STAGE/usr/share/doc/$PKG"
+ICONROOT="$STAGE/usr/share/icons/hicolor"
+mkdir -p "$APPDIR" "$BINDIR" "$DESKDIR" "$AUTODIR" "$DOCDIR" "$STAGE/DEBIAN"
+
+# ---- application code (read-only) ----------------------------------------
+for f in hud.py weather.py claude_quota.py browser_cookie.py chromium_cookies.py \
+         99-rapl-psys.rules; do
+    install -m 0644 "$HERE/$f" "$APPDIR/$f"
+done
+chmod 0755 "$APPDIR/hud.py" "$APPDIR/weather.py" "$APPDIR/claude_quota.py"
+
+# ---- launcher ------------------------------------------------------------
+cat > "$BINDIR/mint-hud" <<'EOF'
+#!/bin/sh
+exec python3 /usr/share/mint-hud/hud.py "$@"
+EOF
+chmod 0755 "$BINDIR/mint-hud"
+
+# ---- icons (into the system hicolor theme) -------------------------------
+for s in 16 24 32 48 64 128 256; do
+    [ -f "$HERE/icons/mint-hud-$s.png" ] || continue
+    install -D -m 0644 "$HERE/icons/mint-hud-$s.png" \
+        "$ICONROOT/${s}x${s}/apps/mint-hud.png"
+done
+
+# ---- menu entries --------------------------------------------------------
+cat > "$DESKDIR/mint-hud.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Linux Mint HUD
+Comment=Live system-stats panel on the desktop
+Exec=mint-hud
+Icon=mint-hud
+Terminal=false
+Categories=System;Monitor;Utility;
+EOF
+cat > "$DESKDIR/mint-hud-settings.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Linux Mint HUD — Settings
+Comment=Configure the desktop system panel
+Exec=mint-hud --settings
+Icon=mint-hud
+Terminal=false
+Categories=Settings;
+EOF
+
+# ---- autostart (per login session, runs as the user) ---------------------
+cat > "$AUTODIR/mint-hud.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Linux Mint HUD
+Comment=Live system-stats panel on the desktop
+Exec=mint-hud
+Icon=mint-hud
+Terminal=false
+X-GNOME-Autostart-enabled=true
+X-GNOME-Autostart-Delay=3
+EOF
+
+# ---- copyright -----------------------------------------------------------
+cat > "$DOCDIR/copyright" <<EOF
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: linux-mint-hud
+Source: https://github.com/Versifft/linux-mint-hud
+
+Files: *
+Copyright: 2026 Versifft
+License: MIT
+EOF
+
+# ---- control + maintainer scripts ----------------------------------------
+INSTALLED_KB=$(du -sk "$STAGE/usr" "$STAGE/etc" 2>/dev/null | awk '{s+=$1} END{print s}')
+cat > "$STAGE/DEBIAN/control" <<EOF
+Package: $PKG
+Version: $VERSION
+Section: utils
+Priority: optional
+Architecture: all
+Maintainer: Versifft <versifft@users.noreply.github.com>
+Depends: python3, python3-pil, python3-gi, python3-gi-cairo, python3-cairo
+Recommends: fonts-inter, fonts-jetbrains-mono, python3-cryptography, gir1.2-secret-1
+Installed-Size: ${INSTALLED_KB:-2000}
+Homepage: https://github.com/Versifft/linux-mint-hud
+Description: Live system-stats panel for the Linux Mint desktop
+ A translucent panel that lives on the desktop showing CPU/GPU/RAM ring gauges,
+ temperatures, memory, disk, network, power and battery, top processes, and an
+ optional Claude-usage / weather slot. It is configured from a graphical
+ settings window, sits below your windows on every workspace, and clicks fall
+ through it to the desktop. Settings and cache are kept per-user under
+ ~/.config/mint-hud.
+EOF
+
+cat > "$STAGE/DEBIAN/postinst" <<'EOF'
+#!/bin/sh
+set -e
+if [ "$1" = configure ]; then
+    gtk-update-icon-cache -f -t /usr/share/icons/hicolor >/dev/null 2>&1 || true
+    update-desktop-database -q >/dev/null 2>&1 || true
+fi
+exit 0
+EOF
+
+cat > "$STAGE/DEBIAN/postrm" <<'EOF'
+#!/bin/sh
+set -e
+if [ "$1" = remove ] || [ "$1" = purge ]; then
+    gtk-update-icon-cache -f -t /usr/share/icons/hicolor >/dev/null 2>&1 || true
+    update-desktop-database -q >/dev/null 2>&1 || true
+fi
+exit 0
+EOF
+chmod 0755 "$STAGE/DEBIAN/postinst" "$STAGE/DEBIAN/postrm"
+
+# ---- build ---------------------------------------------------------------
+DEB="$OUT/${PKG}_${VERSION}_all.deb"
+if dpkg-deb --build --root-owner-group "$STAGE" "$DEB" 2>/dev/null; then
+    :
+else
+    # older dpkg-deb without --root-owner-group
+    dpkg-deb --build "$STAGE" "$DEB"
+fi
+
+echo "built: $DEB"
+command -v lintian >/dev/null 2>&1 && lintian --no-tag-display-limit "$DEB" 2>/dev/null || true
