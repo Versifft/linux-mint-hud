@@ -27,3 +27,6 @@ dist/
 
 # Generated apt repository (published to gh-pages)
 apt/
+
+# First-run marker written by the panel.
+.welcomed
