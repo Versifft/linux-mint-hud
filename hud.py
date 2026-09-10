@@ -3438,10 +3438,9 @@ def run_settings():
         new["location"] = loc_state["data"]
         new["weather_units"] = wunit_combo.get_active_id() or "c"
         new["sensor_names"] = {k: v.strip() for k, v in sensor_names_state.items() if v.strip()}
-        cfgs = [dict(c) for c in (new.get("panels") or [{}])]
-        while len(cfgs) <= editing[0]:
-            cfgs.append({"monitor": 0})
-        pcfg = dict(cfgs[editing[0]])       # keeps the on-disk margins as they are
+        cfgs = [dict(c) for c in (new.get("panels") or [{"monitor": 0}])]
+        idx = max(0, min(editing[0], len(cfgs) - 1))   # clamp, never append phantoms
+        pcfg = dict(cfgs[idx])              # keeps the on-disk margins as they are
         pcfg["weather_show_location"] = showloc_chk.get_active()   # per panel
         pcfg["units"] = units_combo.get_active_id() or "c"
         pcfg["sections"] = {k: cb.get_active() for k, cb in checks.items()}
@@ -3452,7 +3451,7 @@ def run_settings():
         pcfg["sensors"] = ssel or None
         psel = [pid for pid, cb in periph_checks.items() if cb.get_active()]
         pcfg["peripherals"] = psel or None
-        cfgs[editing[0]] = pcfg
+        cfgs[idx] = pcfg
         new["panels"] = cfgs
         save_settings(new)
         _own_stamp[0] = _file_stamp()      # remember our own write (see watcher)
@@ -3464,13 +3463,12 @@ def run_settings():
         if _loading[0]:
             return
         new = dict(load_settings())
-        cfgs = [dict(c) for c in (new.get("panels") or [{}])]
-        while len(cfgs) <= editing[0]:
-            cfgs.append({"monitor": 0})
-        pcfg = dict(cfgs[editing[0]])
+        cfgs = [dict(c) for c in (new.get("panels") or [{"monitor": 0}])]
+        idx = max(0, min(editing[0], len(cfgs) - 1))
+        pcfg = dict(cfgs[idx])
         for _k, _sp in margin_spins.items():
             pcfg[_k] = int(_sp.get_value())
-        cfgs[editing[0]] = pcfg
+        cfgs[idx] = pcfg
         new["panels"] = cfgs
         save_settings(new)
         _own_stamp[0] = _file_stamp()
@@ -3481,14 +3479,13 @@ def run_settings():
         if _loading[0]:
             return
         new = dict(load_settings())
-        cfgs = [dict(c) for c in (new.get("panels") or [{}])]
-        while len(cfgs) <= editing[0]:
-            cfgs.append({"monitor": 0})
+        cfgs = [dict(c) for c in (new.get("panels") or [{"monitor": 0}])]
+        idx = max(0, min(editing[0], len(cfgs) - 1))
         nm = name_entry.get_text().strip()
         if nm:
-            cfgs[editing[0]]["name"] = nm
+            cfgs[idx]["name"] = nm
         else:
-            cfgs[editing[0]].pop("name", None)
+            cfgs[idx].pop("name", None)
         new["panels"] = cfgs
         save_settings(new)
         _own_stamp[0] = _file_stamp()
