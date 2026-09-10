@@ -1417,7 +1417,7 @@ def _refresh_cached(name, argv, path, tmp):
             _INFLIGHT.discard(name)
 
 
-def cached_cmd(name, argv, ttl, ok_prefix=None, fail_ttl=60):
+def cached_cmd(name, argv, ttl, ok_prefix=None, fail_ttl=60, key=None):
     """Returns the last cached stdout, refreshing it on a worker thread when
     stale so the render itself never blocks on network or disk.
 
@@ -1435,14 +1435,26 @@ def cached_cmd(name, argv, ttl, ok_prefix=None, fail_ttl=60):
     if ok_prefix and cached and not cached.startswith(ok_prefix):
         ttl = min(ttl, fail_ttl)
     age = time.time() - os.path.getmtime(path) if os.path.exists(path) else 1e9
-    if age > ttl:
+    # `key` ties the cache to an input (the weather location): when it changes,
+    # refetch immediately instead of waiting out the ttl, and don't serve the
+    # previous input's result in the meantime.
+    key_changed = key is not None and (read_first(f"{path}.key", default="") or "") != str(key)
+    if age > ttl or key_changed:
         with _INFLIGHT_LOCK:
             busy = name in _INFLIGHT
             if not busy:
                 _INFLIGHT.add(name)
         if not busy:
+            if key is not None:
+                try:
+                    with open(f"{path}.key", "w") as f:
+                        f.write(str(key))
+                except OSError:
+                    pass
             threading.Thread(target=_refresh_cached, daemon=True,
                              args=(name, argv, path, f"{path}.tmp")).start()
+        if key_changed:
+            return ""            # the cached text is for the old input; hide it
     return cached
 
 
@@ -1741,7 +1753,9 @@ def gather_frame():
 
     claude_quota = cached_cmd("claude_quota", [f"{CONF_DIR}/claude_quota.py"], 300,
                               ok_prefix="Session")
-    weather_raw = cached_cmd("weather", [f"{CONF_DIR}/weather.py"], 900, ok_prefix="{")
+    _loc = load_settings().get("location")
+    weather_raw = cached_cmd("weather", [f"{CONF_DIR}/weather.py"], 900, ok_prefix="{",
+                             key=json.dumps(_loc, sort_keys=True) if _loc else "none")
 
     sess = week = None
     if "Session" in claude_quota:
