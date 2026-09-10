@@ -3078,7 +3078,18 @@ def run_settings():
         cfgs = [dict(c) for c in (st.get("panels") or [{}])]
         src = cfgs[editing[0]] if editing[0] < len(cfgs) else cfgs[0]
         new = dict(src)                           # inherit the display config
-        if not dup:                               # a plain Add resets placement
+        if dup and (src.get("name") or "").strip():
+            # name the copy "<name> 2", "<name> 3", … (next free number)
+            base = (src["name"] or "").strip()
+            head, _, tail = base.rpartition(" ")
+            root = head.strip() if (head and tail.isdigit()) else base
+            existing = {(p.get("name") or "").strip() for p in cfgs}
+            n = 2
+            while f"{root} {n}" in existing:
+                n += 1
+            new["name"] = f"{root} {n}"
+        elif not dup:                             # a plain Add is a fresh, unnamed panel
+            new.pop("name", None)
             new["position"], new["offset"] = "top-left", None
         new["monitor"] = 1 if _nmon() > 1 else new.get("monitor", 0)
         cfgs.append(new)
