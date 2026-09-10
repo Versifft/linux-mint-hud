@@ -106,13 +106,13 @@ CHOICES="$(zen --list --checklist --width=600 --height=460 \
     --title="Install Linux Mint HUD" \
     --text="Choose what to set up. Safe to run again any time to change things." \
     --column="" --column="Option" --column="id" --hide-column=3 --print-column=3 \
-    TRUE  "Core components (required to run)"          core \
-    TRUE  "Nicer fonts (Inter + JetBrains Mono)"       fonts \
-    TRUE  "Start automatically when you log in"        autostart \
-    TRUE  "Add menu entries (Settings, Uninstall)"     menu \
-    FALSE "Show local weather in the top slot"         weather \
-    FALSE "Claude quota from Chrome / Brave / Edge"    chromium \
-    FALSE "Full system power reading (Intel RAPL)"     rapl)" || exit 0
+    TRUE  "Core components (required to run)"                 core \
+    TRUE  "Nicer fonts (Inter + JetBrains Mono)"              fonts \
+    TRUE  "Start automatically when you log in"               autostart \
+    TRUE  "Add menu entries (Settings, Uninstall)"            menu \
+    TRUE  "Show local weather in the top slot"                weather \
+    TRUE  "Claude quota from Chrome / Brave / Edge browsers"  chromium \
+    TRUE  "Full system power reading (Intel RAPL, optional)"  rapl)" || exit 0
 
 has() { [[ "|$CHOICES|" == *"|$1|"* ]]; }
 
