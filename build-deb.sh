@@ -11,7 +11,7 @@ set -euo pipefail
 umask 022                      # so packaged dirs are 0755, not group-writable
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VERSION="1.0.6"
+VERSION="1.0.7"
 PKG="linux-mint-hud"
 STAGE="$HERE/build/$PKG"
 OUT="$HERE/dist"
@@ -136,19 +136,25 @@ cat > "$STAGE/DEBIAN/postinst" <<'EOF'
 #!/bin/sh
 set -e
 if [ "$1" = configure ]; then
+    prev="${2:-}"        # previous version on an upgrade; empty on a fresh install
     gtk-update-icon-cache -f -t /usr/share/icons/hicolor >/dev/null 2>&1 || true
     update-desktop-database -q >/dev/null 2>&1 || true
 
-    # Best-effort: open the panel now for the active desktop user (the panel
-    # opens the Settings window on its first run), so it appears right after
-    # install. The user is taken from the active graphical login session, so it
-    # works however the package was installed — GDebi/pkexec, apt/sudo, or the
-    # Software Manager (which sets no PKEXEC_UID/SUDO_UID). We copy that session's
+    # After an upgrade we want the app to immediately run the new code, not the
+    # old build still resident in memory. So we stop any running panel (and the
+    # Settings window, if open) and relaunch the panel. On a fresh install the
+    # panel also opens (its first run opens Settings); on an upgrade we relaunch
+    # only if it was already running, so we never pop it open on someone who
+    # had deliberately closed it.
+    #
+    # The target user is the active graphical login session, so it works however
+    # the package was installed — GDebi/pkexec, apt/sudo, or the Software Manager
+    # (which sets no PKEXEC_UID/SUDO_UID). We copy that session's
     # DISPLAY/XAUTHORITY/DBUS from one of its live processes and launch with
-    # systemd-run, which runs it in its own transient scope, fully decoupled from
-    # dpkg's process tree and pipes — a GUI started directly from a maintainer
-    # script inherits apt's status pipe and hangs the whole install. If no live
-    # session is found, the autostart entry opens it on the next login instead.
+    # systemd-run, which runs the panel in its own transient scope, fully
+    # decoupled from dpkg's process tree and pipes — a GUI started directly from
+    # a maintainer script inherits apt's status pipe and hangs the whole install.
+    # If no live session is found, the autostart entry opens it on next login.
     if command -v systemd-run >/dev/null 2>&1 && command -v loginctl >/dev/null 2>&1; then
         uid=""
         for s in $(loginctl list-sessions --no-legend 2>/dev/null | awk '{print $1}'); do
@@ -171,11 +177,31 @@ if [ "$1" = configure ]; then
                 v="$(tr '\0' '\n' < "/proc/$pid/environ" | sed -n 's/^XAUTHORITY=//p' | head -1)"; [ -n "$v" ] && xauth="$v"
                 dbus="$(tr '\0' '\n' < "/proc/$pid/environ" | sed -n 's/^DBUS_SESSION_BUS_ADDRESS=//p' | head -1)"
             fi
-            set -- --collect --quiet --uid="$uid" \
-                   --setenv=DISPLAY="$disp" --setenv=XAUTHORITY="$xauth" \
-                   --setenv=XDG_RUNTIME_DIR="/run/user/$uid"
-            [ -n "$dbus" ] && set -- "$@" --setenv=DBUS_SESSION_BUS_ADDRESS="$dbus"
-            systemd-run "$@" /usr/bin/mint-hud >/dev/null 2>&1 || true
+
+            # Stop the running panel + Settings window. The [.] keeps the pattern
+            # from matching our own pkill/pgrep command line. Give them a moment
+            # to exit (releasing the panel's single-instance lock) before we
+            # escalate, so the relaunch below can actually acquire it.
+            was_running=no
+            if pkill -TERM -u "$uid" -f 'mint-hud/hud[.]py' 2>/dev/null; then
+                was_running=yes
+                _i=0
+                while [ "$_i" -lt 5 ] && pgrep -u "$uid" -f 'mint-hud/hud[.]py' >/dev/null 2>&1; do
+                    sleep 1; _i=$((_i + 1))
+                done
+                pkill -KILL -u "$uid" -f 'mint-hud/hud[.]py' 2>/dev/null || true
+                sleep 1
+            fi
+
+            # Relaunch the panel: always on a fresh install, on an upgrade only
+            # if it had been running.
+            if [ -z "$prev" ] || [ "$was_running" = yes ]; then
+                set -- --collect --quiet --uid="$uid" \
+                       --setenv=DISPLAY="$disp" --setenv=XAUTHORITY="$xauth" \
+                       --setenv=XDG_RUNTIME_DIR="/run/user/$uid"
+                [ -n "$dbus" ] && set -- "$@" --setenv=DBUS_SESSION_BUS_ADDRESS="$dbus"
+                systemd-run "$@" /usr/bin/mint-hud >/dev/null 2>&1 || true
+            fi
         fi
     fi
 fi
