@@ -25,17 +25,24 @@ alternates between the two.
 - **CPU, GPU and RAM** — ring gauges, a strip with one column per logical
   core, and an hour-long history where the GPU rides along as a line over the
   CPU columns.
-- **Thermals** — the CPU package, SSD and wifi-radio temperatures on one line,
-  each on a green-to-red gradient, so a cool part reads calm and a hot one
-  stands out.
-- **Memory, swap and disk** usage.
+- **Thermals** — temperatures on one line, each on a green-to-red gradient.
+  It auto-detects CPU/SSD/wifi by default, or you pick exactly which sensors
+  to show and rename them (it also gives the common chips human-readable names
+  — coretemp → CPU, nvme → SSD, iwlwifi → WiFi, amdgpu → GPU, …).
+- **Memory, swap and disk** usage — one disk by default, or several chosen
+  mounts, each with its own bar.
 - **Network** — one chart, download above the axis and upload below it.
 - **Power** — what the machine draws and, while charging, what the wall
   delivers on top of that, coloured by where the energy is coming from. On
   mains it reads full system power from Intel RAPL when that is permitted (see
   the installer); otherwise it falls back to what the battery reports. The
   battery line carries its charge, direction and terminal voltage.
+- **Devices** — the charge of a wireless mouse, keyboard or headset, read from
+  UPower and sysfs; shown when you pick which peripherals to display.
 - **Top three processes** by CPU and by memory.
+
+Every section can be switched off, and dragged into whatever order you like,
+in the settings window (below).
 
 ## Power states
 
@@ -57,20 +64,50 @@ pack, and reads full system power from RAPL where that is permitted.
 </tr>
 </table>
 
+## Settings
+
+Everything is configured from a graphical window — no files to hand-edit:
+
+```
+~/.config/mint-hud/hud.py --settings
+```
+
+After installing it's on the application menu too, as **Linux Mint HUD —
+Settings**. Changes apply live; the running panel picks them up within a
+moment, no restart.
+
+- **Panels.** Run more than one — name them, duplicate one onto a second
+  monitor, add or remove them. Each panel keeps its own sections, order, disks,
+  sensors, temperature unit and size.
+- **Place and size by hand.** Hit *Move panel…*, drag it anywhere (it stays
+  exactly where you drop it), and drag the corner grip to resize. Four
+  independent edge margins — top, bottom, left, right — fine-tune the gaps and
+  size afterwards. The width is yours to set and never shifts as sections are
+  toggled; a panel is only as tall as its content, growing and shrinking as you
+  switch sections on and off.
+- **Sections.** Tick what to show and drag the enabled ones into any order.
+- **Weather & temperatures.** The weather has its own °C/°F, separate from the
+  hardware temperatures (most people keep PC temps in Celsius); the location
+  name can be hidden per panel.
+
 ## How it's built
 
 There is no separate widget engine. `hud.py` is the whole thing: it samples
-the metrics, lays the panel out top to bottom as a single running cursor,
-renders it with Pillow, and hands the pixels to a GTK window via cairo. Rates
-are deltas against the previous frame, so there is no sampling delay. The panel
-grows to sit at an equal margin on all four sides, spreading any spare height
-across the gaps between sections rather than leaving a hole at the bottom.
+the metrics once, lays each panel out top to bottom as a single running cursor,
+renders it natively at its chosen width with Pillow, and hands the pixels to a
+GTK window via cairo. Rates are deltas against the previous frame, so there is
+no sampling delay. Each panel is drawn to fit its own box — the gaps between
+sections stretch or compress to reach the height, and the width is the one you
+set — so it stays crisp at any size and its width never follows the content.
 
 | | |
 |---|---|
-| `hud.py` | everything: metrics, layout, rendering, the window |
-| `install.sh` | guided installer — dependencies, fonts, autostart |
+| `hud.py` | everything: metrics, layout, rendering, the window, the settings GUI (`--settings`) |
+| `install-gui.sh` | graphical installer/updater (zenity + pkexec) |
+| `uninstall.sh` | graphical/terminal uninstaller |
+| `install.sh` | guided terminal installer — dependencies, fonts, autostart, menu entries |
 | `bootstrap.sh` | clone + install, for the one-liner |
+| `make_icon.py` | renders the app/menu icon (`icons/`) |
 | `claude_quota.py` | Claude plan quota from claude.ai |
 | `weather.py` | current weather from open-meteo (reads `weather.json`) |
 | `browser_cookie.py` | reads the session cookie from the running browser — Firefox first, then Chromium |
@@ -109,15 +146,20 @@ behind it.
 bash <(curl -fsSL https://raw.githubusercontent.com/Versifft/linux-mint-hud/main/bootstrap.sh)
 ```
 
-That clones the repo to `~/.config/mint-hud` and runs the guided installer,
-which asks before each step, skips what is already present, and is safe to
-re-run.
+That clones the repo to `~/.config/mint-hud` and opens the installer. On a
+desktop it's **graphical** — one checklist (everything ticked; untick what you
+don't want), then it does the rest behind a progress bar, asking for your
+password once for the parts that need root. With no desktop session it falls
+back to the same steps as terminal prompts. Either way it's safe to re-run, and
+it adds application-menu entries: **Settings**, **Install / Update** and
+**Uninstall**, so you rarely need a terminal again.
 
-Or clone it yourself and run the installer:
+Or clone it yourself and run whichever installer you prefer:
 
 ```
 git clone https://github.com/Versifft/linux-mint-hud.git ~/.config/mint-hud
-~/.config/mint-hud/install.sh
+~/.config/mint-hud/install-gui.sh   # graphical (falls back to the terminal one)
+~/.config/mint-hud/install.sh       # guided terminal installer
 ```
 
 ### By hand
@@ -144,6 +186,19 @@ fc-cache -f ~/.local/share/fonts
 Then run `~/.config/mint-hud/hud.py`, and for autostart drop a `.desktop` file
 in `~/.config/autostart/` pointing at it with a few seconds of
 `X-GNOME-Autostart-Delay`.
+
+## Uninstalling
+
+From the menu, **Linux Mint HUD — Uninstall**, or:
+
+```
+~/.config/mint-hud/uninstall.sh
+```
+
+It stops the panel and removes the autostart and menu entries. It also
+offers — off by default — to remove the system-power udev rule (one password)
+and the app folder itself, settings and all. Fonts and any packages it
+installed are left in place.
 
 ## The Claude quota cookie
 
@@ -185,8 +240,9 @@ text.
 
 *(example locations — the icon follows the WMO weather code)*
 
-The installer offers to set a location; otherwise create `weather.json` in the
-repo yourself:
+Set a location in the settings window (**Weather → Location → Look up**), or
+let the installer do it; failing that, create `weather.json` in the repo
+yourself:
 
 ```
 {"lat": 47.01, "lon": 7.69, "name": "Lützelflüh"}
@@ -199,9 +255,10 @@ local. With no `weather.json` the weather slot is simply not shown.
 ## Running it
 
 ```
-~/.config/mint-hud/hud.py         # start the panel
-~/.config/mint-hud/hud.py --png   # render one frame to cache/hud.png
-pkill -f "hud[.]py$"             # stop it
+~/.config/mint-hud/hud.py            # start the panel
+~/.config/mint-hud/hud.py --settings # open the settings window
+~/.config/mint-hud/hud.py --png      # render one frame to cache/hud.png
+pkill -f "hud[.]py$"                # stop it
 ```
 
 Note the `[.]` in that pattern — plain `hud.py` also matches the shell you type
