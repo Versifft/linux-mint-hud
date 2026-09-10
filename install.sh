@@ -171,7 +171,7 @@ Type=Application
 Name=Linux Mint HUD
 Comment=Live system stats panel on the desktop
 Exec=$HERE/hud.py
-Icon=utilities-system-monitor
+Icon=mint-hud
 Terminal=false
 X-GNOME-Autostart-enabled=true
 X-GNOME-Autostart-Delay=3
@@ -189,13 +189,21 @@ info "These add 'Linux Mint HUD — Settings' (the graphical settings) and an"
 info "uninstaller to your application menu, so you don't need a terminal."
 if ask "Add menu entries?"; then
     mkdir -p "$APPS"
+    # install our icon into the user's hicolor theme so Icon=mint-hud resolves
+    ICONDIR="$HOME/.local/share/icons/hicolor"
+    for s in 16 24 32 48 64 128 256; do
+        [ -f "$HERE/icons/mint-hud-$s.png" ] || continue
+        mkdir -p "$ICONDIR/${s}x${s}/apps"
+        cp "$HERE/icons/mint-hud-$s.png" "$ICONDIR/${s}x${s}/apps/mint-hud.png"
+    done
+    gtk-update-icon-cache -f -t "$ICONDIR" >/dev/null 2>&1 || true
     cat > "$APPS/mint-hud-settings.desktop" <<EOF
 [Desktop Entry]
 Type=Application
 Name=Linux Mint HUD — Settings
 Comment=Configure the desktop system panel
 Exec=$HERE/hud.py --settings
-Icon=preferences-desktop
+Icon=mint-hud
 Terminal=false
 Categories=Settings;
 EOF
@@ -205,7 +213,7 @@ Type=Application
 Name=Linux Mint HUD — Install / Update
 Comment=Set up or update the desktop system panel
 Exec=$HERE/install-gui.sh
-Icon=system-software-install
+Icon=mint-hud
 Terminal=false
 Categories=Settings;
 EOF
@@ -215,13 +223,13 @@ Type=Application
 Name=Linux Mint HUD — Uninstall
 Comment=Remove the desktop system panel
 Exec=$HERE/uninstall.sh
-Icon=edit-delete
+Icon=mint-hud
 Terminal=false
 Categories=Settings;
 EOF
     chmod +x "$HERE/install-gui.sh" "$HERE/uninstall.sh" 2>/dev/null || true
     update-desktop-database "$APPS" >/dev/null 2>&1 || true
-    ok "Menu entries added."
+    ok "Menu entries and icon added."
 else
     info "Skipped."
 fi

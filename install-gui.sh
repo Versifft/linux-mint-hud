@@ -11,7 +11,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APPS="$HOME/.local/share/applications"
 AUTOSTART="$HOME/.config/autostart/mint-hud.desktop"
 FONT_DIR="$HOME/.local/share/fonts"
-ICON="utilities-system-monitor"
+ICON="mint-hud"                    # our own icon (installed into the hicolor theme)
 
 # No GUI available? Use the guided terminal installer instead.
 if [ -z "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ] || ! command -v zenity >/dev/null 2>&1; then
@@ -20,6 +20,18 @@ fi
 
 zen() { zenity "$@" 2>/dev/null; }
 err() { zen --error --title="Linux Mint HUD" --width=380 --text="$1"; }
+
+# ---- install the app icon into the user's hicolor theme ------------------
+install_icons() {
+    local d="$HOME/.local/share/icons/hicolor" s
+    for s in 16 24 32 48 64 128 256; do
+        [ -f "$HERE/icons/mint-hud-$s.png" ] || continue
+        mkdir -p "$d/${s}x${s}/apps"
+        cp "$HERE/icons/mint-hud-$s.png" "$d/${s}x${s}/apps/mint-hud.png"
+    done
+    gtk-update-icon-cache -f -t "$d" >/dev/null 2>&1 || true
+    xdg-icon-resource forceupdate >/dev/null 2>&1 || true
+}
 
 # ---- write the application-menu entries ----------------------------------
 write_menu_entries() {
@@ -30,7 +42,7 @@ Type=Application
 Name=Linux Mint HUD — Settings
 Comment=Configure the desktop system panel
 Exec=$HERE/hud.py --settings
-Icon=preferences-desktop
+Icon=mint-hud
 Terminal=false
 Categories=Settings;
 EOF
@@ -40,7 +52,7 @@ Type=Application
 Name=Linux Mint HUD — Install / Update
 Comment=Set up or update the desktop system panel
 Exec=$HERE/install-gui.sh
-Icon=system-software-install
+Icon=mint-hud
 Terminal=false
 Categories=Settings;
 EOF
@@ -50,7 +62,7 @@ Type=Application
 Name=Linux Mint HUD — Uninstall
 Comment=Remove the desktop system panel
 Exec=$HERE/uninstall.sh
-Icon=edit-delete
+Icon=mint-hud
 Terminal=false
 Categories=Settings;
 EOF
@@ -155,7 +167,8 @@ fi
     if has fonts;     then echo "# Installing fonts…";        install_fonts; fi
     echo "55"
     if has weather;   then echo "# Fetching the weather…";    set_weather "$CITY"; fi
-    echo "70"
+    echo "65"; echo "# Installing the icon…"; install_icons
+    echo "72"
     if has autostart; then echo "# Enabling autostart…";      write_autostart; fi
     echo "85"
     if has menu;      then echo "# Adding menu entries…";     write_menu_entries; fi

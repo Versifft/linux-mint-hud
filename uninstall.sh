@@ -18,6 +18,7 @@ GUI=no
 stop_panel()   { pkill -f "hud[.]py$" 2>/dev/null; pkill -f "hud[.]py --setting" 2>/dev/null; true; }
 rm_autostart() { rm -f "$AUTOSTART"; }
 rm_menu()      { rm -f "$APPS"/mint-hud-*.desktop; update-desktop-database "$APPS" >/dev/null 2>&1 || true; }
+rm_icons()     { rm -f "$HOME/.local/share/icons/hicolor/"*/apps/mint-hud.png 2>/dev/null; gtk-update-icon-cache -f -t "$HOME/.local/share/icons/hicolor" >/dev/null 2>&1 || true; }
 rm_rule()      { [ -f "$RULE" ] && pkexec rm -f "$RULE"; }
 rm_app()       { rm -rf "$HERE"; }
 
@@ -39,6 +40,7 @@ if [ "$GUI" = yes ]; then
     stop_panel
     rm_autostart
     rm_menu
+    rm_icons
     has rule && rm_rule
     msg="Linux Mint HUD has been removed.\n\nThe fonts and any installed packages were left in place."
     if has app; then
@@ -58,8 +60,8 @@ ask()  { local r; read -r -p "$1 [y/N] " r </dev/tty; [[ "$r" =~ ^[Yy] ]]; }
 
 bold "Uninstall linux-mint-hud"
 ask "Stop the panel and remove autostart + menu entries?" || exit 0
-stop_panel; rm_autostart; rm_menu
-echo "  removed autostart and menu entries."
+stop_panel; rm_autostart; rm_menu; rm_icons
+echo "  removed autostart, menu entries and icon."
 [ -f "$RULE" ] && ask "Remove the system-power udev rule (needs sudo)?" && rm_rule
 if ask "Also delete the app folder and your settings ($HERE)?"; then
     rm_app; echo "  deleted $HERE"
