@@ -2,6 +2,8 @@
 
 import datetime
 import json
+import os
+import shutil
 import subprocess
 import time
 import urllib.error
@@ -10,12 +12,33 @@ import urllib.request
 from browser_cookie import USER_AGENT, any_profile, load_cookie
 
 
+def _claude_bin():
+    """Locate the Claude Code CLI. shutil.which first, then the usual install
+    spots — the panel can be launched (e.g. by the package's post-install hook
+    via systemd-run) with a bare PATH that omits ~/.local/bin, where npm/the
+    installer usually puts `claude`, so PATH alone isn't enough to find it."""
+    exe = shutil.which("claude")
+    if exe:
+        return exe
+    home = os.path.expanduser("~")
+    for c in (os.path.join(home, ".local/bin/claude"),
+              os.path.join(home, "bin/claude"),
+              "/usr/local/bin/claude", "/usr/bin/claude",
+              "/opt/claude/bin/claude"):
+        if os.path.exists(c):
+            return c
+    return None
+
+
 def get_org_id():
     """Organisation id from the Claude Code CLI, or None if it is not
     installed. None means "this machine has no Claude to report on", which is
     a different thing from a call that failed."""
+    exe = _claude_bin()
+    if not exe:
+        return None
     try:
-        r = subprocess.run(["claude", "auth", "status"],
+        r = subprocess.run([exe, "auth", "status"],
                            capture_output=True, text=True, timeout=5)
     except (OSError, subprocess.SubprocessError):
         return None

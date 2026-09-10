@@ -11,7 +11,7 @@ set -euo pipefail
 umask 022                      # so packaged dirs are 0755, not group-writable
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VERSION="1.0.8"
+VERSION="1.0.9"
 PKG="linux-mint-hud"
 STAGE="$HERE/build/$PKG"
 OUT="$HERE/dist"
@@ -165,10 +165,15 @@ if [ "$1" = configure ]; then
             done
             [ -n "$pid" ] || pid="$(pgrep -u "$uid" 2>/dev/null | head -1)"
             disp=":0"; xauth="/home/$uname/.Xauthority"; dbus=""
+            # A sensible default PATH that includes the user's ~/.local/bin —
+            # systemd-run otherwise starts with a bare PATH, and the Claude slot
+            # shells out to the `claude` CLI which usually lives there.
+            upath="/home/$uname/.local/bin:/usr/local/bin:/usr/bin:/bin"
             if [ -n "$pid" ] && [ -r "/proc/$pid/environ" ]; then
                 v="$(tr '\0' '\n' < "/proc/$pid/environ" | sed -n 's/^DISPLAY=//p' | head -1)"; [ -n "$v" ] && disp="$v"
                 v="$(tr '\0' '\n' < "/proc/$pid/environ" | sed -n 's/^XAUTHORITY=//p' | head -1)"; [ -n "$v" ] && xauth="$v"
                 dbus="$(tr '\0' '\n' < "/proc/$pid/environ" | sed -n 's/^DBUS_SESSION_BUS_ADDRESS=//p' | head -1)"
+                v="$(tr '\0' '\n' < "/proc/$pid/environ" | sed -n 's/^PATH=//p' | head -1)"; [ -n "$v" ] && upath="$v"
             fi
 
             # Stop the running panel + Settings window. The [.] keeps the pattern
@@ -191,7 +196,8 @@ if [ "$1" = configure ]; then
             if [ -z "$prev" ] || [ "$was_running" = yes ]; then
                 set -- --collect --quiet --uid="$uid" \
                        --setenv=DISPLAY="$disp" --setenv=XAUTHORITY="$xauth" \
-                       --setenv=XDG_RUNTIME_DIR="/run/user/$uid"
+                       --setenv=XDG_RUNTIME_DIR="/run/user/$uid" \
+                       --setenv=PATH="$upath"
                 [ -n "$dbus" ] && set -- "$@" --setenv=DBUS_SESSION_BUS_ADDRESS="$dbus"
                 systemd-run "$@" /usr/bin/mint-hud >/dev/null 2>&1 || true
             fi

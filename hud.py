@@ -521,12 +521,27 @@ def row_bar(img, x, y, w, h, frac, color):
     """A dim proportional block behind a list row — a heat bar, not a rule."""
     X, Y = int(x * SS), int(y * SS)
     Wp, Hp = int(w * SS), int(h * SS)
+    if Wp < 1 or Hp < 1:                 # a sliver-thin/short row: nothing to draw
+        return
     tile = Image.new("RGBA", (Wp, Hp), (0, 0, 0, 0))
     td = ImageDraw.Draw(tile)
-    td.rounded_rectangle([0, 0, Wp - 1, Hp - 1], radius=3 * SS, fill=(255, 255, 255, 8))
+
+    def bar(x1, fill):
+        # PIL's rounded_rectangle raises ("x1 must be >= x0") when the box is
+        # narrower or shorter than roughly twice the corner radius — which a
+        # low-fraction bar or a compressed panel can produce. Clamp the radius to
+        # the box so each side is at least 2r+2 (radius 0 => a plain rectangle),
+        # which keeps the normal look at normal sizes and never crashes.
+        x1 = int(x1)
+        if x1 < 1:
+            return
+        r = max(0, min(3 * SS, (x1 - 2) // 2, (Hp - 1 - 2) // 2))
+        td.rounded_rectangle([0, 0, x1, Hp - 1], radius=r, fill=fill)
+
+    bar(Wp - 1, (255, 255, 255, 8))
     fw = max(0.0, min(1.0, frac)) * Wp
     if fw > 2 * SS:
-        td.rounded_rectangle([0, 0, fw, Hp - 1], radius=3 * SS, fill=(*color, 46))
+        bar(fw, (*color, 46))
     img.alpha_composite(tile, (X, Y))
 
 
