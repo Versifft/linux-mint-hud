@@ -200,6 +200,55 @@ offers — off by default — to remove the system-power udev rule (one password
 and the app folder itself, settings and all. Fonts and any packages it
 installed are left in place.
 
+## Updates
+
+If you installed the **`.deb`** (see below), updates arrive through Linux
+Mint's normal **Update Manager** — no re-downloading by hand. The package drops
+a signed apt source at `/etc/apt/sources.list.d/linux-mint-hud.list` pointing at
+our repository on GitHub Pages, with its verifying key in
+`/etc/apt/keyrings/`. Whenever a newer version is published you'll simply be
+offered `linux-mint-hud` like any other system update. Your settings in
+`~/.config/mint-hud` are per-user and are never touched by an upgrade.
+
+The from-source install (`bootstrap.sh` above) isn't wired to apt; re-run the
+installer or `git pull` to update it.
+
+### Building the .deb
+
+```
+./build-deb.sh          # -> dist/linux-mint-hud_<version>_all.deb
+```
+
+Installs system-wide under `/usr` (double-click in GDebi / Software Installer,
+or `sudo apt install ./dist/linux-mint-hud_*.deb`), and removes cleanly through
+the package manager. The code is read-only under `/usr/share/mint-hud`; each
+user keeps their own settings and cache in `~/.config/mint-hud`.
+
+### Publishing updates (maintainer)
+
+The apt repository is a set of static files signed with the project's GPG key
+and served from the **`gh-pages`** branch via GitHub Pages. To cut a release:
+
+```
+# 1. bump VERSION in build-deb.sh (e.g. 1.0.5 -> 1.0.6)
+# 2. build, sign and publish in one step:
+./publish-apt.sh --push
+```
+
+That rebuilds the `.deb`, regenerates the signed `apt/` index, and force-pushes
+it to `gh-pages`. Within a minute users see the new version in Update Manager.
+The **private** signing key never leaves your machine — signing happens locally.
+
+One-time setup (already done for this repo): generate the signing key, export
+its public half to `packaging/mint-hud-archive-keyring.asc` (the `.deb` ships a
+dearmored copy), and enable GitHub Pages on the `gh-pages` branch at root.
+
+A CI alternative lives in `.github/workflows/publish-apt.yml` (runs on a
+published GitHub release). It's **opt-in**: it needs the private key stored as
+the `APT_SIGNING_KEY` repository secret, which means trusting GitHub with the
+key. If you'd rather keep the key only on your own machine, ignore the workflow
+and use `./publish-apt.sh --push`.
+
 ## The Claude quota cookie
 
 The Claude section talks to a private claude.ai endpoint that authenticates

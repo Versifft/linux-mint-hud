@@ -11,7 +11,7 @@ set -euo pipefail
 umask 022                      # so packaged dirs are 0755, not group-writable
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VERSION="1.0.4"
+VERSION="1.0.5"
 PKG="linux-mint-hud"
 STAGE="$HERE/build/$PKG"
 OUT="$HERE/dist"
@@ -84,6 +84,19 @@ Icon=mint-hud
 Terminal=false
 X-GNOME-Autostart-enabled=true
 X-GNOME-Autostart-Delay=3
+EOF
+
+# ---- APT source for updates ----------------------------------------------
+# Ship our signed repository as an apt source + keyring, so once installed the
+# app updates through the normal Update Manager whenever a new version is
+# published. The key is our repo-signing public key (armored in packaging/).
+mkdir -p "$STAGE/etc/apt/keyrings" "$STAGE/etc/apt/sources.list.d"
+gpg --dearmor < "$HERE/packaging/mint-hud-archive-keyring.asc" \
+    > "$STAGE/etc/apt/keyrings/linux-mint-hud.gpg"
+chmod 0644 "$STAGE/etc/apt/keyrings/linux-mint-hud.gpg"
+cat > "$STAGE/etc/apt/sources.list.d/linux-mint-hud.list" <<EOF
+# linux-mint-hud updates — signed repo on GitHub Pages
+deb [signed-by=/etc/apt/keyrings/linux-mint-hud.gpg] https://versifft.github.io/linux-mint-hud stable main
 EOF
 
 # ---- copyright -----------------------------------------------------------

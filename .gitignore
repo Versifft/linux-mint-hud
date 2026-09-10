@@ -16,7 +16,14 @@ weather.json
 # Local settings (written by the settings window); machine-specific.
 settings.json
 
+# Timestamped backups the settings window writes; personal, never version.
+settings.json.bak.*
+weather.json.bak.*
+
 # Debian package build output
 build/
 dist/
 *.deb
+
+# Generated apt repository (published to gh-pages)
+apt/
