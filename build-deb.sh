@@ -11,7 +11,7 @@ set -euo pipefail
 umask 022                      # so packaged dirs are 0755, not group-writable
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VERSION="1.0.1"
+VERSION="1.0.2"
 PKG="linux-mint-hud"
 STAGE="$HERE/build/$PKG"
 OUT="$HERE/dist"
@@ -128,14 +128,19 @@ if [ "$1" = configure ]; then
 
     # Best-effort: open the panel right away for the user who ran the install
     # (the panel opens the Settings window on its first run), so they don't have
-    # to hunt the menu. If no live session is found, the autostart entry opens
-    # it on the next login instead. Never fail the install over this.
+    # to hunt the menu. Launch it with systemd-run so it runs in its own
+    # transient scope, fully decoupled from dpkg's process tree and file
+    # descriptors — a long-running GUI started directly from a maintainer script
+    # inherits apt's status pipe and hangs the whole install/removal. If there's
+    # no live session (or no systemd-run) the autostart entry opens it on the
+    # next login instead. Never fail the install over this.
     uid="${PKEXEC_UID:-${SUDO_UID:-}}"
-    if [ -n "$uid" ] && [ "$uid" -ge 1000 ] 2>/dev/null; then
-        user="$(getent passwd "$uid" | cut -d: -f1)"
+    if command -v systemd-run >/dev/null 2>&1 \
+       && [ -n "$uid" ] && [ "$uid" -ge 1000 ] 2>/dev/null; then
         home="$(getent passwd "$uid" | cut -d: -f6)"
         disp=""
         if command -v loginctl >/dev/null 2>&1; then
+            user="$(getent passwd "$uid" | cut -d: -f1)"
             for s in $(loginctl list-sessions --no-legend 2>/dev/null | awk '{print $1}'); do
                 [ "$(loginctl show-session "$s" -p Name --value 2>/dev/null)" = "$user" ] || continue
                 case "$(loginctl show-session "$s" -p Type --value 2>/dev/null)" in
@@ -144,11 +149,9 @@ if [ "$1" = configure ]; then
             done
         fi
         [ -n "$disp" ] || disp=":0"
-        if command -v runuser >/dev/null 2>&1; then
-            runuser -u "$user" -- env DISPLAY="$disp" \
-                XAUTHORITY="$home/.Xauthority" XDG_RUNTIME_DIR="/run/user/$uid" \
-                sh -c 'setsid mint-hud >/dev/null 2>&1 </dev/null &' >/dev/null 2>&1 || true
-        fi
+        systemd-run --collect --quiet --uid="$uid" \
+            --setenv=DISPLAY="$disp" --setenv=XAUTHORITY="$home/.Xauthority" \
+            /usr/bin/mint-hud >/dev/null 2>&1 || true
     fi
 fi
 exit 0
