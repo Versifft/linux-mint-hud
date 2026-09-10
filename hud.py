@@ -39,6 +39,20 @@ LOCK_FILE = os.path.join(CACHE_DIR, "hud.lock")
 SETTINGS_FILE = os.path.join(CONF_DIR, "settings.json")
 WEATHER_FILE = os.path.join(CONF_DIR, "weather.json")
 
+
+def _apply_window_icon(Gtk):
+    """Give our GTK windows the app logo in the taskbar/title bar (the window
+    icon is separate from the .desktop icon). Uses the installed theme icon
+    'mint-hud'; a checkout also carries the PNGs under icons/, used as a fallback
+    so it works before install too."""
+    try:
+        Gtk.Window.set_default_icon_name("mint-hud")
+        png = os.path.join(CODE_DIR, "icons", "mint-hud-256.png")
+        if os.path.exists(png):
+            Gtk.Window.set_default_icon_from_file(png)
+    except Exception:
+        pass
+
 # Every panel section, in the default top-to-bottom order. Single source of
 # truth for: the render order, the on/off checkboxes, and the drag-to-reorder
 # list in the settings window. "top" is the combined quota/weather slot that
@@ -2324,6 +2338,8 @@ def run_window(interval=2.0):
     import cairo
     import math
 
+    _apply_window_icon(Gtk)
+
     disp = Gdk.Display.get_default()
     last_frame = [None]      # most recent gathered metrics, reused for live redraws
 
@@ -2816,6 +2832,8 @@ def run_settings():
     from gi.repository import Gtk, Gdk, GLib
     import urllib.parse
     import urllib.request
+
+    _apply_window_icon(Gtk)
 
     Gtk.Settings.get_default().set_property("gtk-application-prefer-dark-theme", True)
     css = b"""
