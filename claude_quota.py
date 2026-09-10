@@ -3,6 +3,7 @@
 import datetime
 import json
 import subprocess
+import time
 import urllib.error
 import urllib.request
 
@@ -81,7 +82,7 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 _OPENER = urllib.request.build_opener(_NoRedirect)
 
 
-def fetch(org_id, cookie):
+def fetch(org_id, cookie, tries=3):
     req = urllib.request.Request(
         f"https://claude.ai/api/organizations/{org_id}/usage",
         headers={
@@ -90,8 +91,20 @@ def fetch(org_id, cookie):
             "User-Agent": USER_AGENT,
         },
     )
-    with _OPENER.open(req, timeout=6) as resp:
-        return json.loads(resp.read())
+    # Cloudflare fronts this endpoint and hands back a transient 503 (its
+    # "error 1200: temporarily rate limited") or a 429 under light bursts — the
+    # very next request usually succeeds. Retry those a couple of times with a
+    # short backoff before giving up, so the panel doesn't show a bogus error
+    # for a hiccup. Auth failures (401/403) are not retried: they won't clear.
+    for i in range(tries):
+        try:
+            with _OPENER.open(req, timeout=6) as resp:
+                return json.loads(resp.read())
+        except urllib.error.HTTPError as e:
+            if e.code in (429, 503) and i < tries - 1:
+                time.sleep(0.7 * (i + 1))
+                continue
+            raise
 
 
 def main():

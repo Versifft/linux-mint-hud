@@ -11,6 +11,7 @@ import sys
 import threading
 import time
 import traceback
+import urllib.request
 
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
@@ -1615,6 +1616,33 @@ def save_settings(s):
     save_json(SETTINGS_FILE, s)
     global _SETTINGS_MTIME
     _SETTINGS_MTIME = -1.0          # force a reload on the next read
+
+
+def autodetect_location():
+    """First-run convenience: if no weather location is configured yet, guess
+    one from the machine's public IP and save it into settings.json, so the
+    weather slot works out of the box and the guessed town shows up (editable)
+    in the settings window. A no-op when a location is already set or the
+    lookup fails, and it makes no network call at all for existing users (the
+    location check happens before anything is fetched)."""
+    try:
+        if load_settings().get("location"):
+            return
+        req = urllib.request.Request("https://ipapi.co/json/",
+                                     headers={"User-Agent": "linux-mint-hud"})
+        with urllib.request.urlopen(req, timeout=6) as r:
+            d = json.loads(r.read())
+        lat, lon = d.get("latitude"), d.get("longitude")
+        if lat is None or lon is None:
+            return
+        name = d.get("city") or d.get("region") or d.get("country_name") or ""
+        s = dict(load_settings())
+        if s.get("location"):                 # someone set it while we fetched
+            return
+        s["location"] = {"lat": float(lat), "lon": float(lon), "name": str(name)}
+        save_settings(s)
+    except Exception:
+        pass
 
 
 HISTORY = []
@@ -3229,7 +3257,7 @@ def run_settings():
             loc_label.get_style_context().remove_class("result")
             loc_label.get_style_context().add_class("result-ok")
             loc_label.set_text(f"✓ {res['name']}, {res.get('admin1', '')} {res['country_code']}")
-            commit()
+            commit_weather()
         except Exception:
             loc_label.get_style_context().remove_class("result-ok")
             loc_label.get_style_context().add_class("result")
@@ -3412,7 +3440,7 @@ def run_settings():
                 if _loading[0]:
                     return
                 sensor_names_state[sid] = e.get_text()
-                commit()
+                commit_weather()
             ent.connect("changed", _on_name)
             row.pack_start(ent, True, True, 0)
             names_box.pack_start(row, False, False, 0)
@@ -3456,10 +3484,9 @@ def run_settings():
         if _loading[0]:                      # ignore the signals load_panel() fires
             return
         new = dict(load_settings())
-        # Shared (not per-panel): weather location + unit, and sensor names.
-        new["location"] = loc_state["data"]
-        new["weather_units"] = wunit_combo.get_active_id() or "c"
-        new["sensor_names"] = {k: v.strip() for k, v in sensor_names_state.items() if v.strip()}
+        # Shared weather fields (location/unit/sensor names) are *not* touched
+        # here — they have their own commit_weather(), so toggling a section can
+        # never clobber the saved location the way it used to.
         cfgs = [dict(c) for c in (new.get("panels") or [{"monitor": 0}])]
         idx = max(0, min(editing[0], len(cfgs) - 1))   # clamp, never append phantoms
         pcfg = dict(cfgs[idx])              # keeps the on-disk margins as they are
@@ -3477,6 +3504,21 @@ def run_settings():
         new["panels"] = cfgs
         save_settings(new)
         _own_stamp[0] = _file_stamp()      # remember our own write (see watcher)
+
+    def commit_weather(*_):
+        # Shared (not per-panel): the weather location + unit and the custom
+        # sensor names. Written onto fresh on-disk settings and only from the
+        # widgets that actually own these values, so a section toggle elsewhere
+        # never rewrites (and used to wipe) the location.
+        if _loading[0]:
+            return
+        new = dict(load_settings())
+        if loc_state["data"]:                      # never overwrite with nothing
+            new["location"] = loc_state["data"]
+        new["weather_units"] = wunit_combo.get_active_id() or "c"
+        new["sensor_names"] = {k: v.strip() for k, v in sensor_names_state.items() if v.strip()}
+        save_settings(new)
+        _own_stamp[0] = _file_stamp()
 
     def commit_margins(*_):
         # The four margin spinners write only the margins, onto the panel's
@@ -3548,7 +3590,7 @@ def run_settings():
     # every control applies itself immediately — no Save button
     name_entry.connect("changed", commit_name)
     units_combo.connect("changed", commit)
-    wunit_combo.connect("changed", commit)
+    wunit_combo.connect("changed", commit_weather)
     showloc_chk.connect("toggled", commit)
 
     def _on_section_toggle(*_):
@@ -3623,6 +3665,9 @@ if __name__ == "__main__":
         _lock.truncate()
         _lock.write(str(os.getpid()))
         _lock.flush()
+        # Guess a weather location from the public IP if none is set yet, off
+        # the main thread so it never delays the panel (no-op once configured).
+        threading.Thread(target=autodetect_location, daemon=True).start()
         # First run ever: open the settings window once so a new user lands
         # straight in the configuration. A marker keeps it to the first time.
         _welcome = os.path.join(CONF_DIR, ".welcomed")
