@@ -11,7 +11,7 @@ set -euo pipefail
 umask 022                      # so packaged dirs are 0755, not group-writable
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VERSION="1.0.0"
+VERSION="1.0.1"
 PKG="linux-mint-hud"
 STAGE="$HERE/build/$PKG"
 OUT="$HERE/dist"
@@ -41,12 +41,15 @@ exec python3 /usr/share/mint-hud/hud.py "$@"
 EOF
 chmod 0755 "$BINDIR/mint-hud"
 
-# ---- icons (into the system hicolor theme) -------------------------------
+# ---- icons (into the system hicolor theme + a pixmaps fallback) ----------
 for s in 16 24 32 48 64 128 256; do
     [ -f "$HERE/icons/mint-hud-$s.png" ] || continue
     install -D -m 0644 "$HERE/icons/mint-hud-$s.png" \
         "$ICONROOT/${s}x${s}/apps/mint-hud.png"
 done
+# a plain /usr/share/pixmaps copy resolves Icon=mint-hud even without an icon
+# cache, so the menu shows it regardless of theme-cache timing
+install -D -m 0644 "$HERE/icons/mint-hud-128.png" "$STAGE/usr/share/pixmaps/mint-hud.png"
 
 # ---- menu entries --------------------------------------------------------
 cat > "$DESKDIR/mint-hud.desktop" <<EOF
@@ -122,6 +125,31 @@ set -e
 if [ "$1" = configure ]; then
     gtk-update-icon-cache -f -t /usr/share/icons/hicolor >/dev/null 2>&1 || true
     update-desktop-database -q >/dev/null 2>&1 || true
+
+    # Best-effort: open the panel right away for the user who ran the install
+    # (the panel opens the Settings window on its first run), so they don't have
+    # to hunt the menu. If no live session is found, the autostart entry opens
+    # it on the next login instead. Never fail the install over this.
+    uid="${PKEXEC_UID:-${SUDO_UID:-}}"
+    if [ -n "$uid" ] && [ "$uid" -ge 1000 ] 2>/dev/null; then
+        user="$(getent passwd "$uid" | cut -d: -f1)"
+        home="$(getent passwd "$uid" | cut -d: -f6)"
+        disp=""
+        if command -v loginctl >/dev/null 2>&1; then
+            for s in $(loginctl list-sessions --no-legend 2>/dev/null | awk '{print $1}'); do
+                [ "$(loginctl show-session "$s" -p Name --value 2>/dev/null)" = "$user" ] || continue
+                case "$(loginctl show-session "$s" -p Type --value 2>/dev/null)" in
+                    x11|wayland) disp="$(loginctl show-session "$s" -p Display --value 2>/dev/null)"; break ;;
+                esac
+            done
+        fi
+        [ -n "$disp" ] || disp=":0"
+        if command -v runuser >/dev/null 2>&1; then
+            runuser -u "$user" -- env DISPLAY="$disp" \
+                XAUTHORITY="$home/.Xauthority" XDG_RUNTIME_DIR="/run/user/$uid" \
+                sh -c 'setsid mint-hud >/dev/null 2>&1 </dev/null &' >/dev/null 2>&1 || true
+        fi
+    fi
 fi
 exit 0
 EOF

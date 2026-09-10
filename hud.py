@@ -3605,4 +3605,14 @@ if __name__ == "__main__":
         _lock.truncate()
         _lock.write(str(os.getpid()))
         _lock.flush()
+        # First run ever: open the settings window once so a new user lands
+        # straight in the configuration. A marker keeps it to the first time.
+        _welcome = os.path.join(CONF_DIR, ".welcomed")
+        if not os.path.exists(_welcome):
+            try:
+                open(_welcome, "w").close()
+                subprocess.Popen([sys.executable, os.path.abspath(__file__), "--settings"],
+                                 start_new_session=True)
+            except Exception:
+                pass
         run_window()
