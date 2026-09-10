@@ -11,7 +11,7 @@ set -euo pipefail
 umask 022                      # so packaged dirs are 0755, not group-writable
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VERSION="1.0.7"
+VERSION="1.0.8"
 PKG="linux-mint-hud"
 STAGE="$HERE/build/$PKG"
 OUT="$HERE/dist"
@@ -51,22 +51,15 @@ done
 # cache, so the menu shows it regardless of theme-cache timing
 install -D -m 0644 "$HERE/icons/mint-hud-128.png" "$STAGE/usr/share/pixmaps/mint-hud.png"
 
-# ---- menu entries --------------------------------------------------------
-cat > "$DESKDIR/mint-hud.desktop" <<EOF
-[Desktop Entry]
-Type=Application
-Name=Linux Mint HUD
-Comment=Live system-stats panel on the desktop
-Exec=mint-hud
-Icon=mint-hud
-Terminal=false
-Categories=System;Monitor;Utility;
-EOF
+# ---- menu entry ----------------------------------------------------------
+# One entry only: opening it configures the panel and also starts the panel
+# if it isn't running (see run_settings), so there's no need for a separate
+# "launch the panel" item. The panel itself autostarts on login.
 cat > "$DESKDIR/mint-hud-settings.desktop" <<EOF
 [Desktop Entry]
 Type=Application
 Name=Linux Mint HUD — Settings
-Comment=Configure the desktop system panel
+Comment=Configure the desktop system panel (opening this also starts it)
 Exec=mint-hud --settings
 Icon=mint-hud
 Terminal=false

@@ -2863,6 +2863,25 @@ def run_settings():
 
     _apply_window_icon(Gtk)
 
+    # Opening Settings also brings the panel up, so the app works even when
+    # autostart never ran — that's why there's no separate "panel" menu entry.
+    # The running panel holds an exclusive lock on LOCK_FILE for its whole life;
+    # if we can take that lock then none is running, so we release it and start
+    # one. A second panel would exit on the same lock, so this never doubles up.
+    try:
+        _probe = open(LOCK_FILE, "a+")
+        try:
+            fcntl.flock(_probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(_probe, fcntl.LOCK_UN)
+            subprocess.Popen([sys.executable, os.path.abspath(__file__)],
+                             start_new_session=True)
+        except OSError:
+            pass                       # locked -> a panel is already running
+        finally:
+            _probe.close()
+    except Exception:
+        pass
+
     Gtk.Settings.get_default().set_property("gtk-application-prefer-dark-theme", True)
     css = b"""
     window { background-color: #000000; }

@@ -201,7 +201,7 @@ if ask "Add menu entries?"; then
 [Desktop Entry]
 Type=Application
 Name=Linux Mint HUD — Settings
-Comment=Configure the desktop system panel
+Comment=Configure the desktop system panel (opening this also starts it)
 Exec=$HERE/hud.py --settings
 Icon=mint-hud
 Terminal=false
