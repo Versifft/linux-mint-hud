@@ -1,0 +1,24 @@
+Package: linux-mint-hud
+Architecture: all
+Version: 1.1
+Priority: optional
+Section: utils
+Maintainer: Versifft <versifft@users.noreply.github.com>
+Installed-Size: 404
+Depends: python3, python3-pil, python3-gi, python3-gi-cairo, python3-cairo
+Recommends: fonts-inter, fonts-jetbrains-mono, python3-cryptography, gir1.2-secret-1
+Filename: pool/main/linux-mint-hud_1.1_all.deb
+Size: 113110
+MD5sum: 394e3d0adc0dad19339796d4504e4145
+SHA1: f9bd32bf53968777590dfebccfe0456da9217c94
+SHA256: 9e60ca4b7d572e3785258fc2c90dbbaa7091bf6879d4cd5371e0a691f390e377
+SHA512: 041192cecf16638eefc0e947df5646f479b5eb209ef4b0c53daba86899e83c93ff6336bd604d2556b7fe90f4d880730c31976ff071f6ef38b4cd4b220c51ca71
+Homepage: https://github.com/Versifft/linux-mint-hud
+Description: Live system-stats panel for the Linux Mint desktop
+ A translucent panel that lives on the desktop showing CPU/GPU/RAM ring gauges,
+ temperatures, memory, disk, network, power and battery, top processes, and an
+ optional Claude-usage / weather slot. It is configured from a graphical
+ settings window, sits below your windows on every workspace, and clicks fall
+ through it to the desktop. Settings and cache are kept per-user under
+ ~/.config/mint-hud.
+

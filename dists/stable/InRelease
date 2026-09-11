@@ -1,0 +1,42 @@
+-----BEGIN PGP SIGNED MESSAGE-----
+Hash: SHA512
+
+Architectures: all
+Codename: stable
+Components: main
+Date: Fri, 11 Sep 2026 15:39:43 +0000
+Label: linux-mint-hud
+Origin: linux-mint-hud
+Suite: stable
+MD5Sum:
+ e20008a79207b3914b658a89f024377c              150 Release
+ 42d847120e1c209ada51145f4cdc9d72             1204 main/binary-all/Packages
+ a8ee9a2d4ce299839271329aa3fdccd9              784 main/binary-all/Packages.gz
+SHA1:
+ a4e8c0505307dcda945304be53497cc167063ef9              150 Release
+ 80ca6abbbc207b4a66f54dc0ef031169841ff6d8             1204 main/binary-all/Packages
+ 6cf142a1de5cc21cd443e53abac90b169be5dedc              784 main/binary-all/Packages.gz
+SHA256:
+ ee7f5263aeb6e83062803f8dc5d966131b8af3a7e11d01acf21309ababebd1a0              150 Release
+ 9e592da6afbf4c996131714dad5143bb89c977305497ed221176b7d166f62f60             1204 main/binary-all/Packages
+ 7e91372c536683b001df16a8bc4fae4336bf7f127aad3bf8e797de84c8958e19              784 main/binary-all/Packages.gz
+SHA512:
+ d6d4df8383c92fa65d1cd058d2ad42ddf14ecce184ffdb15b9f13703c4497116dac06b41898ca0e0a22f2af73cb0697526d4e14cf344463419e3640a2b445dd7              150 Release
+ 0a9e1c4ac962b9f04cf6ccc12ac91e452b48cbef14635c82508a5099c5610902a68f9fe3bafa5ccebd328372a03f2726662bf4a716be71043f748dd516d255d0             1204 main/binary-all/Packages
+ 006a8a40f5f0d4b5b4e34cef5e5bb91b646ef44367ba2666f2fd95e0f6e5da15637b7e856a04128b06be6a15877be192c81ec93572b7206a81c0351e1f641c84              784 main/binary-all/Packages.gz
+-----BEGIN PGP SIGNATURE-----
+
+iQIzBAEBCgAdFiEEEHLQWYYn8B00ZSGbwpwAguR4bykFAmqkIL8ACgkQwpwAguR4
+bykTFhAAlySdDuhEYIiNHX9groF6n2TvA6COhZLltu01pMavMO0lB97iY/gKpgjP
+25+NO9nYQMfH8qOCNvlTq7lVRGNO1OtdPGMf8JLn+kiyFmQxcQFtQ/LjSrHEnJ4g
+tJkwHT0dEMOVwS9Qr548bjM8m7ak99BZxnIgRt6GfUxaKFcLPlzuf4BRRLPgqdKr
+6DEyAMmNb1ucDyw59Qx5IOJ7XM5Ie6J2oG7GS3fZF5BNg0/tfljT+hj+tw4g851q
+bwFnCmYkiPM2xMiqTrejx5u69d2HzmaQerjSM3wbitamNLx0hVdD4xqg29RIZs3B
+WPCG0LNjA9udMDQ1XO2cD0Q3EJrZyeLrMi0+Qx+h30VnScK8QbCw+NjLmjW7/OmE
+FvLfTBjhoDaDJEm8aU1g9l0fUTnIJkDaRmaKWPt1AnPtPR5h8BVWx3zPDN8TKPls
+FKRiyqBNerUCruuhZ5OOgYFKT2x053OVoJpdNDIhPJh73QiEAyZIGe6JK9J2GB5X
++OHIFJRRvqOXnlQA2LDFjk5lx7pIuwjLJ4kx5cGerJQqlm6jAlQdd1iaoFECiES8
+cwUOzPOoNPS/wKW8MlLLEBuafztNmgZvbrXqriHxCD3W/h3bcFngZgWmjwDE7uOS
+LjBSQOrwxDkXR9/3TBj+Vxu6tRU5Vu7G/TRKNKhw64x7XvAGUi0=
+=+Cqt
+-----END PGP SIGNATURE-----
