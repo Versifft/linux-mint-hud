@@ -92,14 +92,16 @@ it isn't running). Changes apply live, no restart.
   drop it), and drag the corner grip to resize. The width is yours to set; the
   height follows the content, and dragging it taller spreads the sections apart.
 - **Sections.** Tick what to show and drag the enabled ones into any order.
-- **Weather & temperatures.** The weather has its own °C/°F, separate from the
-  hardware temperatures; the location name can be hidden per panel.
+- **Weather & temperatures.** Each panel has its **own** weather location and
+  °C/°F — so two panels can watch two different cities at once — kept separate
+  from the hardware temperatures; the location name can be hidden per panel.
 
 ## Weather
 
 The panel picks your location automatically on first run and shows the local
 weather straight away (from open-meteo, no API key). To change it, use **Weather
-→ Location → Look up** in the settings window.
+→ Location → Look up** in the settings window. The location is **per panel**, so
+you can point each panel at a different city — one at home, one somewhere else.
 
 ## Claude quota
 

@@ -1617,6 +1617,28 @@ def panel_bg(H, width=W):
     _PANEL_CACHE[key] = panel
     return panel
 
+
+def weather_for(loc):
+    """Current weather for one location, cached per-location so each panel can
+    watch its own city. `loc` is {lat, lon, name}; returns the parsed dict or
+    None. The fetch runs weather.py with the coordinates, on a worker thread when
+    stale, and the cache key ties the result to that exact location."""
+    if not loc:
+        return None
+    key = json.dumps(loc, sort_keys=True)
+    tag = re.sub(r"[^0-9A-Za-z]", "", f"{loc.get('lat')}_{loc.get('lon')}")[:24] or "x"
+    raw = cached_cmd("weather_" + tag,
+                     [f"{CODE_DIR}/weather.py", str(loc.get("lat")),
+                      str(loc.get("lon")), str(loc.get("name", ""))],
+                     900, ok_prefix="{", key=key)
+    if raw and raw.strip().startswith("{"):
+        try:
+            return json.loads(raw)
+        except Exception:
+            return None
+    return None
+
+
 def gather_frame():
     """Sample every metric once per tick and advance the delta/history state.
     Returns a dict the per-panel draw reads from — the panels differ only in
@@ -1725,8 +1747,6 @@ def gather_frame():
     claude_quota = cached_cmd("claude_quota", [f"{CODE_DIR}/claude_quota.py"], 300,
                               ok_prefix="Session")
     _loc = load_settings().get("location")
-    weather_raw = cached_cmd("weather", [f"{CODE_DIR}/weather.py"], 900, ok_prefix="{",
-                             key=json.dumps(_loc, sort_keys=True) if _loc else "none")
 
     sess = week = None
     if "Session" in claude_quota:
@@ -1742,12 +1762,7 @@ def gather_frame():
             pass
     have_claude = bool(sess or week)
 
-    weather = None
-    if weather_raw.strip().startswith("{"):
-        try:
-            weather = json.loads(weather_raw)
-        except Exception:
-            pass
+    weather = weather_for(_loc)          # the global location; a panel may override
     have_weather = weather is not None
 
     if not HISTORY:
@@ -1802,7 +1817,7 @@ def render(frame=None, cfg=None, target_h=None, flex_in=0.0, width=None, write_p
     cfg = cfg or {}
     SECTIONS = cfg.get("sections") or _s.get("sections")
     UNITS = cfg.get("units") or _s.get("units", "c")
-    WEATHER_UNITS = _s.get("weather_units", "c")
+    WEATHER_UNITS = cfg.get("weather_units") or _s.get("weather_units", "c")
     SHOW_LOC = cfg.get("weather_show_location", _s.get("weather_show_location", True))
     SENSOR_NAMES = _s.get("sensor_names") or {}
     PERIPH_NAMES = _s.get("peripheral_names") or {}
@@ -1822,6 +1837,12 @@ def render(frame=None, cfg=None, target_h=None, flex_in=0.0, width=None, write_p
         M["power_src"], M["cpu_t"], M["nvme_t"], M["wifi_t"], M["uptime"],
         M["load"], M["sess"], M["week"], M["have_claude"], M["weather"],
         M["have_weather"], M["top_cpu"], M["top_mem"])
+    # Per-panel weather: when this panel names its own city, fetch that one
+    # instead of the shared/global location the frame carries — so two panels
+    # can show two cities.
+    if cfg.get("location"):
+        weather = weather_for(cfg["location"])
+        have_weather = weather is not None
     FLEX = float(flex_in or 0.0)
     FLEX_POINTS = 0
     surf_h = max(1400, min(int(target) + 40, 8000))
@@ -3122,7 +3143,7 @@ def run_settings():
         margin_spins[_key] = sp
 
     _, wg, wc = make_group("Weather")
-    loc = s.get("location") or {}
+    loc = _P0.get("location") or s.get("location") or {}   # per panel, global fallback
     loc_state = {"data": loc or None}
     town = Gtk.Entry()
     town.set_placeholder_text("Town or city")
@@ -3131,7 +3152,7 @@ def run_settings():
     locbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
     locbox.pack_start(town, True, True, 0)
     locbox.pack_start(lookup, False, False, 0)
-    field(wg, wc, "Location", locbox)
+    field(wg, wc, "Location (this panel)", locbox)
     loc_label = _cls(Gtk.Label(label="", xalign=0), "result")
     loc_label.set_no_show_all(True)
     field(wg, wc, "", loc_label)
@@ -3139,11 +3160,11 @@ def run_settings():
     wunit_combo = _noscroll(Gtk.ComboBoxText())
     wunit_combo.append("c", "Celsius (°C)")
     wunit_combo.append("f", "Fahrenheit (°F)")
-    wunit_combo.set_active_id(s.get("weather_units", "c"))
+    wunit_combo.set_active_id(_P0.get("weather_units") or s.get("weather_units", "c"))
     wunit_combo.set_hexpand(False)
     wunit_combo.set_halign(Gtk.Align.START)
     wunit_combo.set_size_request(190, -1)
-    field(wg, wc, "Weather unit", wunit_combo)
+    field(wg, wc, "Weather unit (this panel)", wunit_combo)
     showloc_chk = Gtk.CheckButton(label="Show location name (this panel)")
     showloc_chk.set_active(bool(_P0.get("weather_show_location", True)))
     field(wg, wc, "", showloc_chk)
@@ -3160,7 +3181,7 @@ def run_settings():
             loc_label.get_style_context().remove_class("result")
             loc_label.get_style_context().add_class("result-ok")
             loc_label.set_text(f"✓ {res['name']}, {res.get('admin1', '')} {res['country_code']}")
-            commit_weather()
+            commit()                       # location is per panel now
         except Exception:
             loc_label.get_style_context().remove_class("result-ok")
             loc_label.get_style_context().add_class("result")
@@ -3328,7 +3349,7 @@ def run_settings():
                 if _loading[0]:
                     return
                 sensor_names_state[sid] = e.get_text()
-                commit_weather()
+                commit_sensor_names()
             ent.connect("changed", _on_name)
             row.pack_start(ent, True, True, 0)
             names_box.pack_start(row, False, False, 0)
@@ -3408,6 +3429,9 @@ def run_settings():
         idx = max(0, min(editing[0], len(cfgs) - 1))
         pcfg = dict(cfgs[idx])
         pcfg["weather_show_location"] = showloc_chk.get_active()
+        pcfg["weather_units"] = wunit_combo.get_active_id() or "c"   # per panel
+        if loc_state["data"]:
+            pcfg["location"] = loc_state["data"]                     # per panel
         pcfg["units"] = units_combo.get_active_id() or "c"
         pcfg["sections"] = {k: cb.get_active() for k, cb in checks.items()}
         pcfg["order"] = list(full_order)
@@ -3422,13 +3446,12 @@ def run_settings():
         save_settings(new)
         _own_stamp[0] = _file_stamp()
 
-    def commit_weather(*_):
+    def commit_sensor_names(*_):
+        # Shared custom sensor labels (weather location + unit are per panel now,
+        # committed in commit()).
         if _loading[0]:
             return
         new = dict(load_settings())
-        if loc_state["data"]:
-            new["location"] = loc_state["data"]
-        new["weather_units"] = wunit_combo.get_active_id() or "c"
         new["sensor_names"] = {k: v.strip() for k, v in sensor_names_state.items() if v.strip()}
         save_settings(new)
         _own_stamp[0] = _file_stamp()
@@ -3485,6 +3508,11 @@ def run_settings():
                 _sp.set_value(_rm.get(_k, 22))
             name_entry.set_text(pcfg.get("name", "") or "")
             units_combo.set_active_id(pcfg.get("units", "c"))
+            _ploc = pcfg.get("location") or s.get("location") or {}
+            loc_state["data"] = _ploc or None
+            town.set_text(_ploc.get("name", "") if _ploc else "")
+            loc_label.set_visible(False)
+            wunit_combo.set_active_id(pcfg.get("weather_units") or s.get("weather_units", "c"))
             showloc_chk.set_active(bool(pcfg.get("weather_show_location", True)))
             sec = pcfg.get("sections") or {}
             for k, cb in checks.items():
@@ -3504,7 +3532,7 @@ def run_settings():
 
     name_entry.connect("changed", commit_name)
     units_combo.connect("changed", commit)
-    wunit_combo.connect("changed", commit_weather)
+    wunit_combo.connect("changed", commit)   # weather unit is per panel
     showloc_chk.connect("toggled", commit)
 
     def _on_section_toggle(*_):

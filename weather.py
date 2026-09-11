@@ -52,7 +52,17 @@ def fetch(lat, lon):
         return json.loads(resp.read())
 
 def main():
-    conf = load_conf()
+    # Coordinates may be passed as args (lat lon [name]) so the panel can fetch a
+    # different city per panel; with none, fall back to the saved location.
+    conf = None
+    if len(sys.argv) >= 3:
+        try:
+            conf = (float(sys.argv[1]), float(sys.argv[2]),
+                    sys.argv[3] if len(sys.argv) > 3 else "")
+        except ValueError:
+            conf = None
+    if conf is None:
+        conf = load_conf()
     if not conf:
         return
     lat, lon, name = conf
