@@ -151,15 +151,11 @@ def workarea_height(default=1160):
 
 TARGET_H = workarea_height() - 2 * MARGIN
 FLEX_MAX = 400          # most a gap may stretch (fill a tall work area)
-FLEX_MIN = -14          # most a gap may shrink (fit content taller than the
-                        # target) — enough to close the section gaps and tighten
-                        # a little beyond, so the fill can compress rather than
-                        # fall back to a downscale over a wide range of margins.
-                        # Letting
-                        # the fill compress as well as stretch keeps the panel
-                        # at its native width when toggling sections, instead of
-                        # falling back to a whole-frame downscale that also
-                        # changes the width.
+FLEX_MIN = 0            # hard floor: the gaps never shrink below their natural
+                        # size, so the content can't be squashed. The panel is
+                        # exactly as tall as its content; a config taller than
+                        # the screen is scaled to fit by the off-screen guard
+                        # (scaled_for), not by compressing the layout.
 
 FLEX = 0.0
 FLEX_POINTS = 0
@@ -1535,7 +1531,9 @@ def panel_box(cfg, wa):
     h = max(120, wa.height - top - bottom)
     if left is not None and right is not None:
         left, right = int(left), int(right)
-        w = max(160, wa.width - left - right)
+        # Hard floor at the native width: the panel can be widened but never
+        # squeezed narrower than its content is designed for.
+        w = max(W, wa.width - left - right)
     else:                                  # native width, anchored to a side
         w = W
         if left is not None:
@@ -2662,14 +2660,16 @@ def run_window(interval=2.0):
             if not (st.get("moving") and drag["active"]):
                 return False
             if drag.get("mode") == "resize":
-                # bottom-right grip: free resize. The horizontal drag sets the
-                # width, the vertical drag the height, independently — drag one
-                # axis for wider/narrower or taller/shorter.
+                # bottom-right grip: the horizontal drag sets the width (floored
+                # at the native width — it can be widened but never squeezed
+                # narrower than the content is designed for). The height is not
+                # draggable: it follows the content, so the vertical drag is
+                # inert and the panel keeps its natural height.
                 m0, wa = drag["m0"], drag["wa"]
                 sw0, sh0 = drag["sw0"], drag["sh0"]
-                dx, dy = ev.x_root - drag["sx"], ev.y_root - drag["sy"]
-                new_sw = min(max(160, int(sw0 + dx)), wa.width - m0["left"])
-                new_sh = min(max(120, int(sh0 + dy)), wa.height - m0["top"])
+                dx = ev.x_root - drag["sx"]
+                new_sw = min(max(W, int(sw0 + dx)), wa.width - m0["left"])
+                new_sh = sh0
                 new_right = int(wa.width - m0["left"] - new_sw)
                 new_bottom = int(wa.height - m0["top"] - new_sh)
                 live_box[0] = {"idx": pw["idx"],
