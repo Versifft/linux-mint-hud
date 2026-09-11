@@ -21,10 +21,32 @@ top slot shows Claude plan quota, the weather, or alternates between the two.
 - **Network** — download above the axis, upload below.
 - **Power and battery** — what the machine draws (and, while charging, what the
   wall delivers), plus charge, direction and voltage.
-- **Devices** — the charge of a wireless mouse, keyboard or headset.
+- **Devices** — the battery of a wireless mouse, keyboard or headset. Give them
+  tidy names, and a device you've added stays on the panel (shown *disconnected*)
+  while it's off, so nothing jumps around — it returns on its own when it
+  reconnects.
 - **Top three processes** by CPU and by memory.
 
 Every section can be switched off and dragged into any order.
+
+<img src="docs/panel-single.png" alt="A single full HUD panel on the right of a Linux Mint desktop, from the weather/Claude slot at the top down through the CPU/GPU/RAM gauges, cores, history, thermals, memory, disk, network, power, battery and top-processes sections.">
+
+## As many panels as you like
+
+Every panel is independent — its own sections, order, size, position, units and
+device list — so you can build the exact layout you want. **Add** a fresh panel
+(all sections on) or **Duplicate** the current one, drag each wherever you like,
+and switch sections off until it shows just what you need.
+
+<img src="docs/panels-modular.png" alt="A Linux Mint desktop with four HUD panels at once: a tall full panel down the left, a wide graphs-only panel across the top, a compact gauges panel top-right, and a small weather/thermals panel bottom-right showing a disconnected headset.">
+
+The four panels above are one setup: a **full readout** down the left, a **wide
+strip** across the top with just the history, network and power graphs stretched
+out, a **compact gauges** panel top-right, and a **small glance** panel
+bottom-right with the weather, thermals and the headset battery — here shown
+*disconnected*. Each was placed by hand and sized on its own: the width is
+yours to set, the height follows the content, and dragging a panel taller simply
+spreads its sections apart.
 
 ## Installing
 
@@ -62,9 +84,10 @@ Everything is configured from a graphical window — no files to hand-edit. Open
 **Linux Mint HUD — Settings** from the menu (opening it also starts the panel if
 it isn't running). Changes apply live, no restart.
 
-- **Panels.** Run more than one — name them, duplicate one onto a second
-  monitor, add or remove them. Each keeps its own sections, order, disks,
-  sensors, temperature unit and size.
+- **Panels.** Run more than one — **Add** a fresh panel (every section on) or
+  **Duplicate** the current one (a true copy, auto-named), name them, put one on
+  a second monitor, and remove them. Each keeps its own sections, order, disks,
+  sensors, devices, temperature unit, size and position.
 - **Place and size.** Hit *Move panel…*, drag it anywhere (it stays where you
   drop it), and drag the corner grip to resize. The width is yours to set; the
   height follows the content, and dragging it taller spreads the sections apart.
