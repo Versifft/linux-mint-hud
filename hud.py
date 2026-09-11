@@ -1424,7 +1424,20 @@ def panel_box(cfg, wa):
     h = max(120, wa.height - top - bottom)
     if left is not None and right is not None:
         left, right = int(left), int(right)
-        w = max(W, wa.width - left - right)
+        span = wa.width - left - right
+        if span >= W:
+            w = span                       # both edges honoured exactly
+        else:
+            # The inset is narrower than the native width, so the panel can't be
+            # that narrow — it sits at W. Anchor the edge the panel hugs (the
+            # smaller gap) and cap the far margin to its effective value, so
+            # there is no dead range where nudging the far margin does nothing
+            # and the panel never overflows the screen.
+            w = W
+            if right <= left:
+                left = max(0, wa.width - w - right)
+            else:
+                right = max(0, wa.width - w - left)
     else:
         w = W
         if left is not None:
