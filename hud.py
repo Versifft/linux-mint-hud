@@ -87,6 +87,7 @@ DEFAULT_SETTINGS = {
     "weather_units": "c",
     "weather_show_location": True,
     "sensor_names": {},
+    "peripheral_names": {},        # {peripheral id: custom label}, like sensor_names
     "units": "c",
     "disks": None,
     "sensors": None,
@@ -789,7 +790,12 @@ def _upower_peripherals():
                 d["state"] = ln.split(":", 1)[1].strip()
         if psupply == "no" and "cap" in d:
             name = d.get("name") or "device"
-            devs.append({"id": "upower:" + name, "name": name, "capacity": d["cap"],
+            # id off the tidied name, so the Bluetooth-LE 'LE_' prefix that comes
+            # and goes across reconnects doesn't change a device's identity (and
+            # break a saved selection). Same reason the panel keeps a device that
+            # is momentarily gone.
+            devs.append({"id": "upower:" + _periph_short(name), "name": name,
+                         "capacity": d["cap"],
                          "status": "Charging" if d.get("state") == "charging" else "Discharging"})
     _UPOWER["data"] = devs
     return devs
@@ -819,6 +825,24 @@ def peripheral_batteries():
         if u["name"].lower() not in seen:
             out.append(u)
     return out
+
+
+def _periph_short(name):
+    """A tidier default label for a peripheral: drop the Bluetooth-LE 'LE_'
+    advertised-name prefix and a trailing '-battery', so 'LE_WH-1000XM3' shows
+    as 'WH-1000XM3'. Custom names (peripheral_names) override this."""
+    n = (name or "").strip()
+    if n[:3].upper() == "LE_":
+        n = n[3:]
+    if n.lower().endswith("-battery"):
+        n = n[:-len("-battery")]
+    return n.strip() or "device"
+
+
+def _periph_name_from_id(pid):
+    """Recover a display name from a peripheral id, so a selected device that is
+    currently disconnected (and absent from the live list) can still be shown."""
+    return pid[len("upower:"):] if pid.startswith("upower:") else pid
 
 def read_first(path, cast=str, default=None):
     try:
@@ -1781,6 +1805,7 @@ def render(frame=None, cfg=None, target_h=None, flex_in=0.0, width=None, write_p
     WEATHER_UNITS = _s.get("weather_units", "c")
     SHOW_LOC = cfg.get("weather_show_location", _s.get("weather_show_location", True))
     SENSOR_NAMES = _s.get("sensor_names") or {}
+    PERIPH_NAMES = _s.get("peripheral_names") or {}
     disks_sel = cfg.get("disks", _s.get("disks"))
     sensors_sel = cfg.get("sensors", _s.get("sensors"))
     periph_sel_cfg = cfg.get("peripherals", _s.get("peripherals"))
@@ -2111,20 +2136,32 @@ def render(frame=None, cfg=None, target_h=None, flex_in=0.0, width=None, write_p
         periph_sel = periph_sel_cfg or []
         if not periph_sel:
             return y
-        devs = [p for p in peripheral_batteries()
-                if p["id"] in periph_sel and p["capacity"] is not None]
-        if not devs:
-            return y
+        # Show every selected device in its saved order, present or not. A
+        # device that is off/out of range (absent from the live list) stays put
+        # and is shown as disconnected, rather than dropping out and reshuffling
+        # the panel — and it reappears on its own when it reconnects.
+        present = {p["id"]: p for p in peripheral_batteries()}
+        rows = [present.get(pid) or {"id": pid, "name": _periph_name_from_id(pid),
+                                     "capacity": None, "status": "disconnected"}
+                for pid in periph_sel]
         label(d, PAD, y, "devices", VIOLET)
         y += 18
-        for p in devs:
+        for p in rows:
+            nm = PERIPH_NAMES.get(p["id"]) or _periph_short(p["name"])
             dcap = p["capacity"]
-            col = GREEN if p["status"] == "Charging" else ramp_rgb(1 - dcap / 100)
-            text(d, PAD, y - 2, p["name"][:26], F(UI_MED, T_BODY), TEXT)
-            text(d, R, y - 2, f"{dcap}%", f_val, col, anchor="r")
-            y += 15
-            bar(img, PAD, y, CW, 5, dcap / 100, col)
-            y += 13
+            if dcap is None:                       # disconnected / no reading
+                text(d, PAD, y - 2, nm[:22], F(UI_MED, T_BODY), MUTE)
+                text(d, R, y - 2, "disconnected", F(UI_MED, T_MICRO), MUTE, anchor="r")
+                y += 15
+                bar(img, PAD, y, CW, 5, 0.0, MUTE)
+                y += 13
+            else:
+                col = GREEN if p["status"] == "Charging" else ramp_rgb(1 - dcap / 100)
+                text(d, PAD, y - 2, nm[:26], F(UI_MED, T_BODY), TEXT)
+                text(d, R, y - 2, f"{dcap}%", f_val, col, anchor="r")
+                y += 15
+                bar(img, PAD, y, CW, 5, dcap / 100, col)
+                y += 13
         return y + gap(20)
 
     def proc_list(y, title, hue, rows, value_of, fmt_of, colour_of,
@@ -3294,19 +3331,53 @@ def run_settings():
 
     _, deg, dec = make_group("Devices")
     cur_periph = _P0.get("peripherals") or []
+    periph_names_state = dict(s.get("peripheral_names") or {})
     periph_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=7)
     periph_checks = {}
-    periphs = peripheral_batteries()
-    for p in periphs:
-        cap = p["capacity"]
-        cb = Gtk.CheckButton(label=f"{p['name']}" + (f"   {cap}%" if cap is not None else ""))
-        cb.set_active(p["id"] in cur_periph)
-        periph_checks[p["id"]] = cb
-        periph_box.pack_start(cb, False, False, 0)
-    if not periphs:
-        periph_box.pack_start(
-            _cls(Gtk.Label(label="No wireless mouse/keyboard batteries detected.",
-                           xalign=0), "hint"), False, False, 0)
+
+    def rebuild_periph_rows(sel):
+        # Rebuilt per panel: one row per device — a tick to show it plus a field
+        # to rename it. Devices that are selected but currently off/out of range
+        # are listed too (as "(off)", still ticked), so they aren't lost and the
+        # panel keeps showing them as disconnected until they come back.
+        for c in periph_box.get_children():
+            periph_box.remove(c)
+        periph_checks.clear()
+        devs = peripheral_batteries()
+        present = {p["id"] for p in devs}
+        for pid in sel:
+            if pid not in present:
+                devs.append({"id": pid, "name": _periph_name_from_id(pid),
+                             "capacity": None, "status": "disconnected"})
+        if not devs:
+            periph_box.pack_start(
+                _cls(Gtk.Label(label="No wireless mouse/keyboard/headset batteries detected.",
+                               xalign=0), "hint"), False, False, 0)
+            periph_box.show_all()
+            return
+        for p in devs:
+            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            cap = p["capacity"]
+            suffix = f"   {cap}%" if cap is not None else "   (off)"
+            cb = Gtk.CheckButton(label=_periph_short(p["name"]) + suffix)
+            cb.set_active(p["id"] in sel)
+            cb.connect("toggled", commit)
+            periph_checks[p["id"]] = cb
+            ent = Gtk.Entry()
+            ent.set_placeholder_text(_periph_short(p["name"]))
+            ent.set_text(periph_names_state.get(p["id"], ""))
+            ent.set_width_chars(14)
+
+            def _on_pname(e, pid=p["id"]):
+                if _loading[0]:
+                    return
+                periph_names_state[pid] = e.get_text()
+                commit_periph_names()
+            ent.connect("changed", _on_pname)
+            row.pack_start(cb, True, True, 0)
+            row.pack_start(ent, False, False, 0)
+            periph_box.pack_start(row, False, False, 0)
+        periph_box.show_all()
     field(deg, dec, "", periph_box)
 
     actionbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
@@ -3349,6 +3420,15 @@ def run_settings():
             new["location"] = loc_state["data"]
         new["weather_units"] = wunit_combo.get_active_id() or "c"
         new["sensor_names"] = {k: v.strip() for k, v in sensor_names_state.items() if v.strip()}
+        save_settings(new)
+        _own_stamp[0] = _file_stamp()
+
+    def commit_periph_names(*_):
+        # Shared custom labels for peripherals (like sensor_names).
+        if _loading[0]:
+            return
+        new = dict(load_settings())
+        new["peripheral_names"] = {k: v.strip() for k, v in periph_names_state.items() if v.strip()}
         save_settings(new)
         _own_stamp[0] = _file_stamp()
 
@@ -3405,9 +3485,7 @@ def run_settings():
             ssel = pcfg.get("sensors") or []
             for sid, cb in sens_checks.items():
                 cb.set_active((sid in ssel) if ssel else (_sens_paths.get(sid) in auto_paths))
-            psel = pcfg.get("peripherals") or []
-            for pid, cb in periph_checks.items():
-                cb.set_active(pid in psel)
+            rebuild_periph_rows(pcfg.get("peripherals") or [])
             full_order[:] = normalize_order(pcfg.get("order"))
             _rebuild_order_rows()
             rebuild_sensor_names()
@@ -3434,7 +3512,7 @@ def run_settings():
         commit()
     for _cb in sens_checks.values():
         _cb.connect("toggled", _on_sensor_toggle)
-    for _cb in (list(disk_checks.values()) + list(periph_checks.values())):
+    for _cb in disk_checks.values():        # periph checkboxes are wired in rebuild_periph_rows
         _cb.connect("toggled", commit)
     for _sp in margin_spins.values():
         _sp.connect("value-changed", commit_margins)
