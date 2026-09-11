@@ -38,15 +38,16 @@ device list — so you can build the exact layout you want. **Add** a fresh pane
 (all sections on) or **Duplicate** the current one, drag each wherever you like,
 and switch sections off until it shows just what you need.
 
-<img src="docs/panels-modular.png" alt="A Linux Mint desktop with four HUD panels at once: a tall full panel down the left, a wide graphs-only panel across the top, a compact gauges panel top-right, and a small weather/thermals panel bottom-right showing a disconnected headset.">
+<img src="docs/panels-modular.png" alt="A Linux Mint desktop with four HUD panels at once: a tall full panel down the left showing Berlin weather, a wide graphs-only panel across the top, a compact gauges panel top-right, and a small panel bottom-right showing Malibu weather and a disconnected headset.">
 
 The four panels above are one setup: a **full readout** down the left, a **wide
 strip** across the top with just the history, network and power graphs stretched
 out, a **compact gauges** panel top-right, and a **small glance** panel
-bottom-right with the weather, thermals and the headset battery — here shown
-*disconnected*. Each was placed by hand and sized on its own: the width is
-yours to set, the height follows the content, and dragging a panel taller simply
-spreads its sections apart.
+bottom-right. Each was placed by hand and sized on its own — the width is yours,
+the height follows the content. Weather is per panel too: the left one watches
+**Berlin**, the bottom-right **Malibu**, so you can keep an eye on two cities at
+once (the headset on that panel is currently *disconnected* — a device you've
+added stays put and comes back on its own when it reconnects).
 
 ## Installing
 
