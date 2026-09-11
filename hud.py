@@ -16,9 +16,6 @@ import urllib.request
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont
 
 HOME = os.path.expanduser("~")
-# Code can live read-only under /usr (the .deb) or in a checkout; data always
-# lives per-user under ~/.config/mint-hud. For a checkout at that path the two
-# coincide, so nothing changes there.
 CODE_DIR = os.path.dirname(os.path.abspath(__file__))
 CONF_DIR = os.path.join(HOME, ".config", "mint-hud")
 CACHE_DIR = os.path.join(CONF_DIR, "cache")
@@ -40,7 +37,6 @@ LOCK_FILE = os.path.join(CACHE_DIR, "hud.lock")
 SETTINGS_FILE = os.path.join(CONF_DIR, "settings.json")
 WEATHER_FILE = os.path.join(CONF_DIR, "weather.json")
 
-
 def _apply_window_icon(Gtk):
     """Give our GTK windows the app logo in the taskbar/title bar (the window
     icon is separate from the .desktop icon). Uses the installed theme icon
@@ -54,12 +50,6 @@ def _apply_window_icon(Gtk):
     except Exception:
         pass
 
-# Every panel section, in the default top-to-bottom order. Single source of
-# truth for: the render order, the on/off checkboxes, and the drag-to-reorder
-# list in the settings window. "top" is the combined quota/weather slot that
-# alternates; "claude" and "weather" are the same content on their own, so a
-# user can place either (or both) wherever they like — they default off so the
-# stock panel keeps the single alternating slot.
 SECTION_DEFS = [
     ("top", "Quota / weather"),
     ("claude", "Quota only"),
@@ -82,29 +72,28 @@ SECTION_LABELS = dict(SECTION_DEFS)
 _DEFAULT_OFF = {"claude", "weather"}
 
 DEFAULT_SETTINGS = {
-    "panels": None,                # list of {monitor, position, offset}; None -> one
-    "move": None,                  # index of the panel being placed by hand, or None
-    "monitor": 0,                  # legacy single-panel keys (migrated into panels)
+    "panels": None,
+    "move": None,
+    "monitor": 0,
     "position": "top-right",
-    "margin": 22,                  # legacy single margin, migrated to the edge margins
-    "vmargin": 22,                 # legacy symmetric top/bottom gap (migrated to top/bottom)
-    "hmargin": 22,                 # legacy near-side gap (migrated to right)
-    "top": 22,                     # per-panel edge margins (gap from each work-area edge);
-    "bottom": 22,                  # top+bottom set the height, left+right set the width
-    "left": None,                  # None -> native width anchored to the right
+    "margin": 22,
+    "vmargin": 22,
+    "hmargin": 22,
+    "top": 22,
+    "bottom": 22,
+    "left": None,
     "right": 22,
     "location": None,
-    "weather_units": "c",          # "c"/"f" for the weather slot (separate from hardware)
-    "weather_show_location": True, # show the town name on the weather slot
-    "sensor_names": {},            # {sensor id: custom label} for the thermals row
-    "units": "c",                  # "c" or "f", for hardware temperatures (per panel)
-    "disks": None,                 # mount points to show; None -> just "/"
-    "sensors": None,               # temp-sensor ids for thermals; None -> auto
-    "peripherals": None,           # peripheral-battery ids to show; None -> none
+    "weather_units": "c",
+    "weather_show_location": True,
+    "sensor_names": {},
+    "units": "c",
+    "disks": None,
+    "sensors": None,
+    "peripherals": None,
     "sections": {k: (k not in _DEFAULT_OFF) for k in SECTION_ORDER},
-    "order": None,                 # custom section order (list of keys); None -> default
+    "order": None,
 }
-
 
 def temp_str(c, units, decimals=0):
     """A temperature in degrees C formatted for display, converted to Fahrenheit
@@ -133,7 +122,6 @@ CW = W - 2 * PAD
 
 MARGIN = 22
 
-
 def workarea_height(default=1160):
     """Usable desktop height from _NET_WORKAREA, so a moved or resized taskbar
     is picked up. Read once per process; restart the renderer after changing
@@ -148,18 +136,12 @@ def workarea_height(default=1160):
         pass
     return default
 
-
 TARGET_H = workarea_height() - 2 * MARGIN
-FLEX_MAX = 400          # most a gap may stretch (fill a tall work area)
-FLEX_MIN = 0            # hard floor: the gaps never shrink below their natural
-                        # size, so the content can't be squashed. The panel is
-                        # exactly as tall as its content; a config taller than
-                        # the screen is scaled to fit by the off-screen guard
-                        # (scaled_for), not by compressing the layout.
+FLEX_MAX = 400
+FLEX_MIN = 0
 
 FLEX = 0.0
 FLEX_POINTS = 0
-
 
 def gap(base):
     """A section boundary that absorbs part of the leftover vertical space."""
@@ -194,7 +176,6 @@ TRACK     = (255, 255, 255, 22)
 RING      = (255, 255, 255, 20)
 HAIRLINE  = (255, 255, 255, 24)
 
-
 def ramp_rgb(t):
     """Colour for a 0..1 position on the green-amber-red ramp."""
     t = max(0.0, min(1.0, t))
@@ -203,7 +184,6 @@ def ramp_rgb(t):
             k = (t - t0) / (t1 - t0) if t1 > t0 else 0.0
             return tuple(int(a + (b - a) * k) for a, b in zip(c0, c1))
     return RAMP[-1][1]
-
 
 WEATHER_TEMP_STOPS = (
     (-15, (128, 158, 255)),
@@ -215,7 +195,6 @@ WEATHER_TEMP_STOPS = (
     (37,  (246, 105, 64)),
     (43,  (222, 42, 52)),
 )
-
 
 def weather_temp_color(c):
     """Colour for an air temperature in degrees Celsius (see WEATHER_TEMP_STOPS)."""
@@ -229,7 +208,6 @@ def weather_temp_color(c):
             k = (c - t0) / (t1 - t0) if t1 > t0 else 0.0
             return tuple(int(a + (b - a) * k) for a, b in zip(c0, c1))
     return stops[-1][1]
-
 
 def load_color(v, ncpu):
     """Load average against the thread count. Below it there is headroom and
@@ -245,7 +223,6 @@ def load_color(v, ncpu):
         return WARN
     return TEXT
 
-
 def state_color(pct, base=ACCENT):
     """Each domain keeps its own hue until it runs hot; red and amber are
     reserved for load, so a colour change always means something."""
@@ -255,10 +232,8 @@ def state_color(pct, base=ACCENT):
         return WARN
     return base
 
-
 FONT_DIR = os.path.join(HOME, ".local/share/fonts")
 _FONT_CACHE = {}
-
 
 def _font_file(*candidates):
     for name in candidates:
@@ -272,13 +247,11 @@ def _font_file(*candidates):
                 return hits[0]
     return None
 
-
 UI_MED    = _font_file("Inter-Medium.otf", "Inter-Medium.ttf", "DejaVuSans.ttf")
 UI_SEMI   = _font_file("Inter-SemiBold.otf", "Inter-SemiBold.ttf", "DejaVuSans-Bold.ttf")
 MONO_REG  = _font_file("JetBrainsMono-Regular.ttf", "DejaVuSansMono.ttf")
 MONO_MED  = _font_file("JetBrainsMono-Medium.ttf", "DejaVuSansMono.ttf")
 MONO_LIGHT= _font_file("JetBrainsMono-Light.ttf", "DejaVuSansMono.ttf")
-
 
 def F(path, size):
     key = (path, size)
@@ -286,13 +259,11 @@ def F(path, size):
         _FONT_CACHE[key] = ImageFont.truetype(path, int(size * SS))
     return _FONT_CACHE[key]
 
-
 def measure(f, s, tracking=0):
     if not s:
         return 0
     w = f.getlength(s)
     return w + tracking * SS * (len(s) - 1)
-
 
 def text(d, x, y, s, f, fill, anchor="l", tracking=0):
     """anchor: 'l' left, 'r' right (x is the right edge), 'c' centred on x."""
@@ -313,15 +284,12 @@ def text(d, x, y, s, f, fill, anchor="l", tracking=0):
     else:
         d.text((x, y), s, font=f, fill=fill)
 
-
 def label(d, x, y, s, fill=MUTE, size=T_LABEL, tracking=1.6):
     """Small letterspaced all-caps section label."""
     text(d, x, y, s.upper(), F(UI_SEMI, size), fill, tracking=tracking)
 
-
 def label_r(d, x, y, s, fill=MUTE, size=T_LABEL, tracking=1.6):
     text(d, x, y, s.upper(), F(UI_SEMI, size), fill, anchor="r", tracking=tracking)
-
 
 def bar(img, x, y, w, h, frac, color=None, track=TRACK, ramp=False):
     """Rounded progress bar with a track and a soft gradient fill. Drawn into a
@@ -365,13 +333,11 @@ def bar(img, x, y, w, h, frac, color=None, track=TRACK, ramp=False):
 
     img.alpha_composite(tile, (X - pad, Y - pad))
 
-
 def _pctl(vals, q):
     if not vals:
         return 0.0
     sv = sorted(vals)
     return sv[min(len(sv) - 1, int(len(sv) * q))]
-
 
 def draw_weather_icon(img, cx, cy, s, code):
     """Small hand-drawn weather glyph, in the same supersampled-Pillow idiom as
@@ -445,7 +411,6 @@ def draw_weather_icon(img, cx, cy, s, code):
     tile = tile.resize((box * SS, box * SS), Image.LANCZOS)
     img.alpha_composite(tile, (int(cx * SS - box * SS / 2), int(cy * SS - box * SS / 2)))
 
-
 def gauge(img, cx, cy, r, thick, frac, color):
     """270-degree donut gauge. Arcs are drawn into a locally supersampled tile
     because Pillow's arc() has no antialiasing of its own."""
@@ -468,7 +433,6 @@ def gauge(img, cx, cy, r, thick, frac, color):
 
     tile = tile.resize((size * SS, size * SS), Image.BOX)
     img.alpha_composite(tile, (int((cx - size / 2) * SS), int((cy - size / 2) * SS)))
-
 
 def core_strip(img, x, y, w, h, loads):
     """One mini column per logical core. Twenty of them make a texture that a
@@ -498,7 +462,6 @@ def core_strip(img, x, y, w, h, loads):
     img.alpha_composite(tile.filter(ImageFilter.GaussianBlur(1.6 * SS)), (X - o, Y - o))
     img.alpha_composite(tile, (X - o, Y - o))
 
-
 def swatch(d, x, y, color, size=8, line=False):
     """Legend marker. These were 2px-tall bars that read as dashes and gave the
     colour almost no area to show in; a square is small but actually legible.
@@ -512,22 +475,16 @@ def swatch(d, x, y, color, size=8, line=False):
         d.rounded_rectangle([x * SS, (y + 1.5) * SS, (x + size) * SS, (y + 1.5 + size) * SS],
                             radius=1.5 * SS, fill=(*color, 235))
 
-
 def row_bar(img, x, y, w, h, frac, color):
     """A dim proportional block behind a list row — a heat bar, not a rule."""
     X, Y = int(x * SS), int(y * SS)
     Wp, Hp = int(w * SS), int(h * SS)
-    if Wp < 1 or Hp < 1:                 # a sliver-thin/short row: nothing to draw
+    if Wp < 1 or Hp < 1:
         return
     tile = Image.new("RGBA", (Wp, Hp), (0, 0, 0, 0))
     td = ImageDraw.Draw(tile)
 
     def bar(x1, fill):
-        # PIL's rounded_rectangle raises ("x1 must be >= x0") when the box is
-        # narrower or shorter than roughly twice the corner radius — which a
-        # low-fraction bar or a compressed panel can produce. Clamp the radius to
-        # the box so each side is at least 2r+2 (radius 0 => a plain rectangle),
-        # which keeps the normal look at normal sizes and never crashes.
         x1 = int(x1)
         if x1 < 1:
             return
@@ -539,7 +496,6 @@ def row_bar(img, x, y, w, h, frac, color):
     if fw > 2 * SS:
         bar(fw, (*color, 46))
     img.alpha_composite(tile, (X, Y))
-
 
 def _series_cols(key, n):
     """Aggregate a history series into n columns on the compressed time axis.
@@ -572,11 +528,9 @@ def _series_cols(key, n):
         cols.append(last)
     return cols
 
-
 def _scale(cols, floor=None, clamp=None):
     ymax = max(_pctl(cols, 0.95) * 1.35, floor or 1.0)
     return min(ymax, clamp) if clamp else ymax
-
 
 def _cols_into(tile, ox, oy, w, h, cols, ymax, color, colw, gap, up=True, colors=None):
     """Column bars, brightness scaled by height so peaks read and idle noise
@@ -594,14 +548,12 @@ def _cols_into(tile, ox, oy, w, h, cols, ymax, color, colw, gap, up=True, colors
                else [bx, oy, bx + colw * SS, oy + bh])
         td.rectangle(box, fill=(*c, a))
 
-
 def consumption_color(t):
     """Colour of the consumption segment for a power-direction value: dark red
     while the pack is supplying it, amber once the wall is — charging or not,
     because either way the machine is running off mains."""
     k = min(1.0, max(0.0, t) / CHG_IDLE)
     return tuple(int(a + (b - a) * k) for a, b in zip(DARKRED, AMBER))
-
 
 def histogram(img, x, y, w, h, key, color, floor=None, clamp=None, colw=3, gap=1.6,
               overlay=None, overlay_color=None):
@@ -631,7 +583,6 @@ def histogram(img, x, y, w, h, key, color, floor=None, clamp=None, colw=3, gap=1
     img.alpha_composite(tile.filter(ImageFilter.GaussianBlur(1.8 * SS)), (X - pad, Y - pad))
     img.alpha_composite(tile, (X - pad, Y - pad))
     return ymax
-
 
 def power_chart(img, x, y, w, h, floor=None):
     """Consumption and battery charging, stacked.
@@ -691,7 +642,6 @@ def power_chart(img, x, y, w, h, floor=None):
     img.alpha_composite(line, (X - pad, Y - pad))
     return ymax
 
-
 def net_chart(img, x, y, w, h, color_down, color_up, floor=None):
     """Down and up mirrored around a shared axis — one chart that shows the
     balance between the two, instead of two disconnected little boxes.
@@ -730,7 +680,6 @@ def net_chart(img, x, y, w, h, color_down, color_up, floor=None):
     img.alpha_composite(tile, (X - pad, Y - pad))
     return ymax
 
-
 def fmt_bytes(n, per_sec=False):
     n = float(n)
     for unit, div in (("G", 1 << 30), ("M", 1 << 20), ("K", 1 << 10)):
@@ -739,7 +688,6 @@ def fmt_bytes(n, per_sec=False):
             s = f"{v:.1f}{unit}" if v < 100 else f"{v:.0f}{unit}"
             return s + ("/s" if per_sec else "")
     return f"{n:.0f}B" + ("/s" if per_sec else "")
-
 
 def fmt_dur(secs):
     secs = int(secs)
@@ -752,9 +700,7 @@ def fmt_dur(secs):
         return f"{h}h {m:02d}m"
     return f"{m}m"
 
-
 _DETECTED = {}
-
 
 def _detect(key, finder):
     """Cache a hardware name for DETECT_TTL seconds. Both the network interface
@@ -769,7 +715,6 @@ def _detect(key, finder):
         return val
     _DETECTED[key] = (now, found)
     return found
-
 
 def net_iface():
     """Whichever interface carries the default route — ethernet when it is
@@ -786,7 +731,6 @@ def net_iface():
             pass
         return None
     return _detect("iface", find)
-
 
 def battery_path():
     """The system battery's power_supply device, or None on a desktop.
@@ -808,9 +752,7 @@ def battery_path():
         return None
     return _detect("battery", find)
 
-
 _UPOWER = {"t": -1e9, "data": []}
-
 
 def _upower_peripherals():
     """Peripheral batteries UPower knows about — this reaches devices that
@@ -852,7 +794,6 @@ def _upower_peripherals():
     _UPOWER["data"] = devs
     return devs
 
-
 def peripheral_batteries():
     """Wireless mouse/keyboard/headset/etc. batteries. Two sources merged:
     /sys/class/power_supply devices with scope=Device (the ones battery_path
@@ -879,7 +820,6 @@ def peripheral_batteries():
             out.append(u)
     return out
 
-
 def read_first(path, cast=str, default=None):
     try:
         with open(path) as f:
@@ -887,12 +827,10 @@ def read_first(path, cast=str, default=None):
     except Exception:
         return default
 
-
 def cpu_jiffies():
     with open("/proc/stat") as f:
         parts = list(map(int, f.readline().split()[1:8]))
     return parts[3] + parts[4], sum(parts)
-
 
 def cpu_jiffies_per_core():
     cores = []
@@ -904,7 +842,6 @@ def cpu_jiffies_per_core():
             cores.append((v[3] + v[4], sum(v)))
     return cores
 
-
 def meminfo():
     d = {}
     with open("/proc/meminfo") as f:
@@ -912,7 +849,6 @@ def meminfo():
             k, _, v = line.partition(":")
             d[k] = int(v.split()[0]) * 1024
     return d
-
 
 def cpu_freq_ghz():
     vals = []
@@ -928,7 +864,6 @@ def cpu_freq_ghz():
         return sum(mhz) / len(mhz) / 1000 if mhz else 0.0
     except Exception:
         return 0.0
-
 
 def gpu_engine_snapshot():
     """Per-engine GPU busy counters from /proc/*/fdinfo, deduped by
@@ -994,7 +929,6 @@ def gpu_engine_snapshot():
                 totals["tot:" + cls] = max(totals.get("tot:" + cls, 0), v)
     return totals
 
-
 def _gpu_drivers():
     """Kernel driver name behind each DRM card (i915, xe, amdgpu, nvidia,
     nouveau, ...)."""
@@ -1005,7 +939,6 @@ def _gpu_drivers():
         except OSError:
             pass
     return drv
-
 
 def gpu_source():
     """How to read GPU utilisation on this machine, or None if there is no way.
@@ -1032,7 +965,6 @@ def gpu_source():
         return ""
     return _detect("gpu_src", find) or None
 
-
 def net_bytes(iface):
     try:
         with open("/proc/net/dev") as f:
@@ -1047,10 +979,8 @@ def net_bytes(iface):
         pass
     return 0, 0
 
-
 REAL_FS = {"ext2", "ext3", "ext4", "btrfs", "xfs", "f2fs", "vfat", "exfat",
            "ntfs", "ntfs3", "zfs", "reiserfs", "jfs", "udf", "bcachefs"}
-
 
 def disk_mounts():
     """Mounted real (block-backed) filesystems as (mountpoint, device), one per
@@ -1075,7 +1005,6 @@ def disk_mounts():
         return out or [("/", "")]
     return _detect("mounts", find)
 
-
 def diskio_sectors():
     r = w = 0
     try:
@@ -1095,17 +1024,14 @@ def diskio_sectors():
         pass
     return r * 512, w * 512
 
-
 WIFI_DRIVERS = ("iwlwifi", "iwlmvm", "ath9k", "ath10k", "ath11k", "ath12k",
                 "mt7921", "mt7922", "mt7915", "mt7925", "rtw88", "rtw89",
                 "mwifiex", "brcmfmac")
-
 
 def _hwmon_list():
     """(name, dir) for every hwmon node."""
     return [(read_first(f"{h}/name", default=""), h)
             for h in glob.glob("/sys/class/hwmon/hwmon*")]
-
 
 def _hwmon_temp_input(h, labels=()):
     """Path to a temp*_input under hwmon dir h: one whose *_label matches a
@@ -1120,7 +1046,6 @@ def _hwmon_temp_input(h, labels=()):
     ins = sorted(glob.glob(f"{h}/temp*_input"))
     return ins[0] if ins else ""
 
-
 def _zone_temp(match):
     """A thermal_zone temp path whose type (lowercased) satisfies match()."""
     for z in glob.glob("/sys/class/thermal/thermal_zone*"):
@@ -1128,7 +1053,6 @@ def _zone_temp(match):
         if t and match(t) and os.path.exists(f"{z}/temp"):
             return f"{z}/temp"
     return ""
-
 
 def _find_cpu_temp():
     hw = _hwmon_list()
@@ -1152,7 +1076,6 @@ def _find_cpu_temp():
                        or "soc" in t or "cluster" in t or "bigcore" in t)
             or _zone_temp(lambda t: t == "acpitz"))
 
-
 def _find_disk_temp():
     hw = _hwmon_list()
     for name, h in hw:
@@ -1167,7 +1090,6 @@ def _find_disk_temp():
                 return p
     return ""
 
-
 def _find_wifi_temp():
     for name, h in _hwmon_list():
         nl = name.lower()
@@ -1176,7 +1098,6 @@ def _find_wifi_temp():
             if p:
                 return p
     return _zone_temp(lambda t: any(d in t for d in ("iwlwifi", "wifi", "wlan", "ath")))
-
 
 def temps():
     """CPU, drive and wifi-radio temperatures in degrees C, each None when the
@@ -1193,7 +1114,6 @@ def temps():
         out.append(v / 1000 if v is not None else None)
     return tuple(out)
 
-
 def _sensor_thresholds(text):
     t = text.lower()
     if any(k in t for k in ("coretemp", "k10temp", "cpu", "package", "tctl", "tdie", "x86_pkg")):
@@ -1206,30 +1126,26 @@ def _sensor_thresholds(text):
         return 80, 95
     return 70, 90
 
-
 def _sensor_short(chip, lab):
     """A short, human-readable name for a sensor from its hwmon chip name and
     optional label, checked against the common Linux drivers (coretemp, k10temp,
     nvme, amdgpu, iwlwifi, …). Falls back to the raw label/chip, trimmed."""
     c = (chip or "").lower()
     t = (lab or "").lower()
-    # CPU — Intel coretemp / AMD k10temp / zenpower / SoC thermal
     if c in ("coretemp", "cpu_thermal", "x86_pkg_temp") or "package id" in t or "x86_pkg" in t:
         if t.startswith("core "):
             return "CPU Core " + t.split()[-1]
         return "CPU"
     if c in ("k10temp", "k8temp", "zenpower"):
-        if "ccd" in t:                          # per-die temps: Tccd1 -> CPU CCD1
+        if "ccd" in t:
             return "CPU " + (lab or "").upper()
         return "CPU"
     if "tctl" in t or "tdie" in t or t == "cpu":
         return "CPU"
-    # Storage
     if c == "nvme":
         return "SSD" + (f" {lab}" if t and t != "composite" else "")
     if c == "drivetemp" or "drive" in t or "disk" in t:
         return "Disk"
-    # GPU — AMD / NVIDIA
     if c in ("amdgpu", "radeon"):
         if "junction" in t:
             return "GPU Junction"
@@ -1238,19 +1154,16 @@ def _sensor_short(chip, lab):
         return "GPU"
     if c in ("nouveau", "nvidia"):
         return "GPU"
-    # Wi-Fi radios
     if c.startswith(("iwlwifi", "ath", "mt79", "mt76", "rtw", "mwifiex", "brcm")) \
             or "wifi" in t or "wlan" in t:
         return "WiFi"
-    # Board / chipset / ACPI
     if c == "acpitz" or "acpi" in c:
         return "System"
     if "pch" in c:
         return "Chipset"
     if c.startswith(("nct6", "it87", "it8", "f718", "w836", "nzxt")):
-        return (lab or chip)[:12]               # super-I/O: keep its own label
+        return (lab or chip)[:12]
     return (lab or chip)[:12]
-
 
 def list_sensors():
     """Every readable temperature sensor as {id, label, full, path, warn, crit}.
@@ -1282,11 +1195,9 @@ def list_sensors():
                         "path": p, "warn": warn, "crit": crit})
     return out
 
-
 def read_sensor(path):
     v = read_first(path, int)
     return v / 1000 if v is not None else None
-
 
 def temp_gradient(t, warn, crit):
     """Smooth green->amber->red for a device temperature, on the app's own
@@ -1298,9 +1209,7 @@ def temp_gradient(t, warn, crit):
     pos = 0.5 + 0.5 * (t - warn) / (crit - warn)
     return ramp_rgb(pos)
 
-
 _RAPL = None
-
 
 def rapl_source():
     """Best readable RAPL energy counter, or None.
@@ -1337,7 +1246,6 @@ def rapl_source():
         _RAPL = (best[1], best[2], best[3]) if best else False
     return _RAPL or None
 
-
 def rapl_watts(prev_uj, elapsed):
     """(watts, energy_uj, domain name). Counter is cumulative and wraps."""
     src = rapl_source()
@@ -1355,7 +1263,6 @@ def rapl_watts(prev_uj, elapsed):
     if delta < 0:
         return None, now_uj, name
     return delta / 1e6 / elapsed, now_uj, name
-
 
 def battery():
     """(capacity%, status, watts, eta_s, volts). Handles both power_supply
@@ -1393,7 +1300,6 @@ def battery():
             eta = (full - now) / rate * 3600
     return cap, status, watts, eta, volt / 1e6
 
-
 def top_procs(prev, elapsed):
     """Per-process CPU% (of one core, like top) and RSS, from /proc."""
     clk = os.sysconf("SC_CLK_TCK")
@@ -1426,10 +1332,8 @@ def top_procs(prev, elapsed):
             rows.append((comm, max(0.0, (jiff - pj) * scale) if pj is not None else 0.0, rss))
     return cur, rows
 
-
 _INFLIGHT = set()
 _INFLIGHT_LOCK = threading.Lock()
-
 
 def _refresh_cached(name, argv, path, tmp):
     try:
@@ -1445,7 +1349,6 @@ def _refresh_cached(name, argv, path, tmp):
     finally:
         with _INFLIGHT_LOCK:
             _INFLIGHT.discard(name)
-
 
 def cached_cmd(name, argv, ttl, ok_prefix=None, fail_ttl=60, key=None):
     """Returns the last cached stdout, refreshing it on a worker thread when
@@ -1465,9 +1368,6 @@ def cached_cmd(name, argv, ttl, ok_prefix=None, fail_ttl=60, key=None):
     if ok_prefix and cached and not cached.startswith(ok_prefix):
         ttl = min(ttl, fail_ttl)
     age = time.time() - os.path.getmtime(path) if os.path.exists(path) else 1e9
-    # `key` ties the cache to an input (the weather location): when it changes,
-    # refetch immediately instead of waiting out the ttl, and don't serve the
-    # previous input's result in the meantime.
     key_changed = key is not None and (read_first(f"{path}.key", default="") or "") != str(key)
     if age > ttl or key_changed:
         with _INFLIGHT_LOCK:
@@ -1484,9 +1384,8 @@ def cached_cmd(name, argv, ttl, ok_prefix=None, fail_ttl=60, key=None):
             threading.Thread(target=_refresh_cached, daemon=True,
                              args=(name, argv, path, f"{path}.tmp")).start()
         if key_changed:
-            return ""            # the cached text is for the old input; hide it
+            return ""
     return cached
-
 
 def load_json(path, default):
     try:
@@ -1495,24 +1394,18 @@ def load_json(path, default):
     except Exception:
         return default
 
-
 def save_json(path, data):
     tmp = f"{path}.{os.getpid()}.tmp"
     with open(tmp, "w") as f:
         json.dump(data, f)
     os.replace(tmp, path)
 
-
 _SETTINGS = None
 _SETTINGS_MTIME = -1.0
 
-
-# The display settings each panel carries its own copy of (placement —
-# monitor and the four edge margins — is per-panel too).
 PANEL_DISPLAY_KEYS = ("top", "bottom", "left", "right", "units", "disks",
                       "sensors", "peripherals", "sections", "order",
                       "weather_show_location")
-
 
 def panel_box(cfg, wa):
     """Resolve a panel's on-screen box from its four edge margins.
@@ -1531,10 +1424,8 @@ def panel_box(cfg, wa):
     h = max(120, wa.height - top - bottom)
     if left is not None and right is not None:
         left, right = int(left), int(right)
-        # Hard floor at the native width: the panel can be widened but never
-        # squeezed narrower than its content is designed for.
         w = max(W, wa.width - left - right)
-    else:                                  # native width, anchored to a side
+    else:
         w = W
         if left is not None:
             left = int(left)
@@ -1546,7 +1437,6 @@ def panel_box(cfg, wa):
     y = wa.y + top
     return x, y, w, h, {"top": top, "bottom": bottom, "left": int(left), "right": int(right)}
 
-
 def normalize_order(order):
     """A section order as a full list of known keys: drop unknown ones, append
     any the saved order predates (a new key) in its default slot."""
@@ -1556,14 +1446,12 @@ def normalize_order(order):
         return kept + [k for k in SECTION_ORDER if k not in seen]
     return list(SECTION_ORDER)
 
-
 def normalize_sections(sd):
     """A sections on/off map with every known key present."""
     out = {k: (k not in _DEFAULT_OFF) for k in SECTION_ORDER}
     if isinstance(sd, dict):
         out.update({k: bool(v) for k, v in sd.items() if k in out})
     return out
-
 
 def load_settings():
     """Current settings merged onto the defaults, re-read whenever the file
@@ -1584,17 +1472,12 @@ def load_settings():
                 data["location"] = legacy
         s = dict(DEFAULT_SETTINGS)
         s.update({k: v for k, v in data.items() if k not in ("sections", "panels")})
-        # Top-level display config is kept as the template new panels inherit.
         s["sections"] = normalize_sections(data.get("sections"))
         s["order"] = normalize_order(data.get("order"))
         if "vmargin" not in data:
             s["vmargin"] = data.get("margin", 22)
         if "hmargin" not in data:
             s["hmargin"] = data.get("margin", 22)
-        # Each panel carries its own display config; anything a panel doesn't
-        # set falls back to the top-level (legacy, pre-per-panel) values, so an
-        # old single-panel settings file migrates cleanly into panel 0. Old
-        # single monitor/position/offset keys migrate the same way.
         tmpl = {k: s.get(k) for k in PANEL_DISPLAY_KEYS}
         raw_panels = data.get("panels") or [{"monitor": s.get("monitor", 0),
                                              "position": s.get("position", "top-right"),
@@ -1605,8 +1488,6 @@ def load_settings():
             q.setdefault("monitor", 0)
             for k in ("units", "disks", "sensors", "peripherals", "weather_show_location"):
                 q.setdefault(k, tmpl[k])
-            # Four independent edge margins. Migrate from the old symmetric
-            # vmargin/hmargin (or a free offset) when a panel predates them.
             vm = q.get("vmargin", tmpl.get("top", 22))
             hm = q.get("hmargin", tmpl.get("right", 22))
             q.setdefault("top", vm)
@@ -1624,12 +1505,10 @@ def load_settings():
         _SETTINGS, _SETTINGS_MTIME = s, m
     return _SETTINGS
 
-
 def save_settings(s):
     save_json(SETTINGS_FILE, s)
     global _SETTINGS_MTIME
-    _SETTINGS_MTIME = -1.0          # force a reload on the next read
-
+    _SETTINGS_MTIME = -1.0
 
 def autodetect_location():
     """First-run convenience: if no weather location is configured yet, guess
@@ -1650,22 +1529,19 @@ def autodetect_location():
             return
         name = d.get("city") or d.get("region") or d.get("country_name") or ""
         s = dict(load_settings())
-        if s.get("location"):                 # someone set it while we fetched
+        if s.get("location"):
             return
         s["location"] = {"lat": float(lat), "lon": float(lon), "name": str(name)}
         save_settings(s)
     except Exception:
         pass
 
-
 HISTORY = []
 _STATE = None
 _PERSISTED = 0.0
 PERSIST_EVERY = 30
 
-
 _PANEL_CACHE = {}
-
 
 def panel_bg(H, width=W):
     """The glass panel behind the content, at a given width and height. Built
@@ -1703,7 +1579,6 @@ def panel_bg(H, width=W):
         _PANEL_CACHE.clear()
     _PANEL_CACHE[key] = panel
     return panel
-
 
 def gather_frame():
     """Sample every metric once per tick and advance the delta/history state.
@@ -1874,7 +1749,6 @@ def gather_frame():
         "have_weather": have_weather, "top_cpu": top_cpu, "top_mem": top_mem,
     }
 
-
 def render(frame=None, cfg=None, target_h=None, flex_in=0.0, width=None, write_png=False):
     """Draw one panel's image from a gathered frame and a panel config, and
     return (image, next_flex). The panel is drawn natively at `width` px wide
@@ -1884,9 +1758,6 @@ def render(frame=None, cfg=None, target_h=None, flex_in=0.0, width=None, write_p
     out of cfg; the flex converges over two draws and is per-panel state the
     caller keeps."""
     global FLEX, FLEX_POINTS
-    # Local width so the whole draw (and its helpers, which take explicit
-    # coordinates) works at any panel width; PAD stays fixed, so a wider panel
-    # spreads its content out rather than magnifying it.
     W = int(width) if width else globals()["W"]
     CW = W - 2 * PAD
     M = frame if frame is not None else gather_frame()
@@ -1894,7 +1765,7 @@ def render(frame=None, cfg=None, target_h=None, flex_in=0.0, width=None, write_p
     cfg = cfg or {}
     SECTIONS = cfg.get("sections") or _s.get("sections")
     UNITS = cfg.get("units") or _s.get("units", "c")
-    WEATHER_UNITS = _s.get("weather_units", "c")          # global (one weather source)
+    WEATHER_UNITS = _s.get("weather_units", "c")
     SHOW_LOC = cfg.get("weather_show_location", _s.get("weather_show_location", True))
     SENSOR_NAMES = _s.get("sensor_names") or {}
     disks_sel = cfg.get("disks", _s.get("disks"))
@@ -1915,10 +1786,6 @@ def render(frame=None, cfg=None, target_h=None, flex_in=0.0, width=None, write_p
         M["have_weather"], M["top_cpu"], M["top_mem"])
     FLEX = float(flex_in or 0.0)
     FLEX_POINTS = 0
-    # Tall enough to hold the content stretched to fill the box: when the gaps
-    # spread out (target > natural) the lowest section sits near `target`, so
-    # the surface has to reach it or it would be clipped. `target` is the box
-    # height (work-area-bounded); the cap guards against a stray huge value.
     surf_h = max(1400, min(int(target) + 40, 8000))
     img = Image.new("RGBA", (W * SS, surf_h * SS), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
@@ -2301,8 +2168,6 @@ def render(frame=None, cfg=None, target_h=None, flex_in=0.0, width=None, write_p
         "disk": sec_disk, "network": sec_network, "power": sec_power,
         "battery": sec_battery, "devices": sec_devices, "processes": sec_processes,
     }
-    # Draw the sections in this panel's chosen order (normalised to a full list
-    # of known keys), skipping the ones switched off.
     for key in order_cfg:
         fn = section_fns.get(key)
         if fn is not None and SECTIONS.get(key, True):
@@ -2310,12 +2175,6 @@ def render(frame=None, cfg=None, target_h=None, flex_in=0.0, width=None, write_p
 
     H = int(round(y))
 
-    # Flex the gaps between sections to fill the box height (target = work area
-    # minus the top+bottom margins), changing only the gaps, never the width:
-    #  * target > natural: stretch the gaps (up to FLEX_MAX each), so making the
-    #    panel taller simply spreads the elements further apart.
-    #  * target <= natural: hold at the natural size — the gaps never shrink
-    #    below it (the hard floor), so the content can't be squashed.
     natural = y - FLEX_POINTS * FLEX
     next_flex = 0.0
     if FLEX_POINTS:
@@ -2332,7 +2191,6 @@ def render(frame=None, cfg=None, target_h=None, flex_in=0.0, width=None, write_p
         os.replace(tmp, PNG_PATH)
 
     return out, next_flex, int(round(natural))
-
 
 def log(msg):
     """Append one line to cache/hud.log, trimming it when it gets long.
@@ -2351,7 +2209,6 @@ def log(msg):
     except OSError:
         pass
 
-
 def surface_from(img):
     """PIL image -> cairo surface, without going through PNG.
 
@@ -2365,7 +2222,6 @@ def surface_from(img):
     surf = cairo.ImageSurface.create_for_data(
         memoryview(buf), cairo.FORMAT_ARGB32, img.width, img.height, img.width * 4)
     return surf, buf
-
 
 def run_window(interval=2.0):
     """Paint the panel(s) onto the desktop and keep them updated.
@@ -2384,7 +2240,7 @@ def run_window(interval=2.0):
     _apply_window_icon(Gtk)
 
     disp = Gdk.Display.get_default()
-    last_frame = [None]      # most recent gathered metrics, reused for live redraws
+    last_frame = [None]
 
     def monitor_of(cfg):
         return (disp.get_monitor(cfg.get("monitor", 0))
@@ -2470,8 +2326,8 @@ def run_window(interval=2.0):
             win.hide()
             win.show()
 
-    GRIP = 30                            # size of the resize handle, in px
-    live_box = [None]                    # {"idx": i, "margins": {...}} during a grip drag
+    GRIP = 30
+    live_box = [None]
 
     def eff_margins(pw, cfg, wa):
         """The panel's box (x, y, w, h) and resolved four margins, honouring an
@@ -2531,7 +2387,7 @@ def run_window(interval=2.0):
         wa = monitor_of(cfg).get_workarea()
         x, y, bw, bh, m = eff_margins(pw, cfg, wa)
         maxh = wa.height - m["top"] - 2
-        if img.height > maxh > 0:                 # off-screen guard only
+        if img.height > maxh > 0:
             k = maxh / img.height
             return img.resize((max(120, round(img.width * k)), maxh), Image.LANCZOS)
         return img
@@ -2543,8 +2399,8 @@ def run_window(interval=2.0):
             return None
         st = pw["state"]
         st["surface"], st["buf"] = surface_from(dimg)
-        st["natw"], st["nath"] = dimg.width, dimg.height   # true surface size
-        st["w"], st["h"] = dimg.width, dimg.height          # window size (== surface at rest)
+        st["natw"], st["nath"] = dimg.width, dimg.height
+        st["w"], st["h"] = dimg.width, dimg.height
         return dimg
 
     def setup(pw):
@@ -2556,9 +2412,6 @@ def run_window(interval=2.0):
                 nw, nh = st.get("natw") or aw, st.get("nath") or ah
                 cr.set_operator(cairo.OPERATOR_SOURCE)
                 if nw and nh and (aw != nw or ah != nh):
-                    # Window is a different size than the rendered frame (a live
-                    # grip resize): let cairo scale the surface — cheap, unlike a
-                    # per-motion Pillow resize. Re-rendered crisply on release.
                     cr.save()
                     cr.scale(aw / nw, ah / nh)
                     cr.set_source_surface(st["surface"], 0, 0)
@@ -2652,7 +2505,7 @@ def run_window(interval=2.0):
                 wa = monitor_of(_cfg_of()).get_workarea()
                 drag["m0"] = panel_box(_cfg_of(), wa)[4]
                 drag["wa"] = wa
-                drag["sw0"], drag["sh0"] = max(1, w), max(1, h)   # current size
+                drag["sw0"], drag["sh0"] = max(1, w), max(1, h)
             else:
                 drag["mode"] = "move"
                 drag["wx"], drag["wy"] = win.get_position()
@@ -2662,12 +2515,6 @@ def run_window(interval=2.0):
             if not (st.get("moving") and drag["active"]):
                 return False
             if drag.get("mode") == "resize":
-                # bottom-right grip: free resize. The horizontal drag sets the
-                # width (floored at the native width — widen freely, never
-                # squeeze narrower than the content is designed for); the
-                # vertical drag sets the height, but only from the natural height
-                # upward — dragging taller spreads the gaps between elements,
-                # and the hard floor keeps it from squashing below natural.
                 m0, wa = drag["m0"], drag["wa"]
                 sw0, sh0 = drag["sw0"], drag["sh0"]
                 dx, dy = ev.x_root - drag["sx"], ev.y_root - drag["sy"]
@@ -2679,14 +2526,10 @@ def run_window(interval=2.0):
                 live_box[0] = {"idx": pw["idx"],
                                "margins": {**m0, "right": new_right, "bottom": new_bottom}}
                 st["resizing"] = True
-                # Per motion: just resize the window and let cairo scale the
-                # existing surface (fast, but stretched on one axis). A short
-                # debounce then re-renders it natively at the new box, so it
-                # snaps crisp and un-stretched whenever the drag pauses.
                 st["w"], st["h"] = new_sw, new_sh
                 win.set_size_request(new_sw, new_sh)
                 gw = win.get_window()
-                if gw is not None:              # keep the whole grip area clickable
+                if gw is not None:
                     gw.input_shape_combine_region(
                         cairo.Region(cairo.RectangleInt(0, 0, new_sw, new_sh)), 0, 0)
                 win.queue_draw()
@@ -2711,8 +2554,6 @@ def run_window(interval=2.0):
                 cfgs.append({"monitor": 0})
             pcfg = dict(cfgs[pw["idx"]])
             if drag.get("mode") == "resize":
-                # lock in the resized box (its left/top were fixed, right/bottom
-                # moved) — the width is now the user's, set by left+right.
                 if drag.get("rr"):
                     GLib.source_remove(drag["rr"])
                     drag["rr"] = None
@@ -2721,8 +2562,6 @@ def run_window(interval=2.0):
                     live_box[0] = None
                 st["resizing"] = False
             else:
-                # dropped freely: set all four margins to exactly where it sits,
-                # at its current size, and it stays there. Display config kept.
                 wx, wy = win.get_position()
                 ww = win.get_allocated_width() or W
                 wh = win.get_allocated_height() or (st["h"] or 0)
@@ -2734,9 +2573,6 @@ def run_window(interval=2.0):
                              "right": int(wa.width - (wx - wa.x) - ww),
                              "bottom": int(wa.height - (wy - wa.y) - wh)})
             cfgs[pw["idx"]] = pcfg
-            # stay in move mode after a drag: the settings' "Save position"
-            # button (which clears settings["move"]) is what ends it, so the
-            # user can nudge or resize repeatedly first.
             s["panels"] = cfgs
             save_settings(s)
             st["placekey"] = None
@@ -2779,9 +2615,6 @@ def run_window(interval=2.0):
         panel is rendered natively at its box width and height — no scaling — so
         it stays crisp at any size; it keeps its own flex, which converges over
         two passes, so a settings change asks for passes=2. Touches no windows."""
-        # While a panel is actively dragged, skip the whole refresh — gathering
-        # metrics and rendering is heavy enough to hitch the drag. The live
-        # feedback runs off the last frame; the metrics resume on release.
         if any(pw["state"].get("drag", {}).get("active") for pw in panels):
             return
         M = gather_frame()
@@ -2804,10 +2637,6 @@ def run_window(interval=2.0):
             sync_count(max(1, len(cfgs)))
             for i, pw in enumerate(panels):
                 pw["idx"] = i
-            # Render each panel's frame before placing it. The flex fill
-            # converges over two passes, so a settings change (passes=2) sizes
-            # and places each panel exactly once, at its final size — no visible
-            # jump.
             render_all(passes)
             move_idx = s.get("move")
             if move_idx is True:
@@ -2819,7 +2648,7 @@ def run_window(interval=2.0):
                     st["enter_move"]()
                 elif move_idx != i and st.get("moving"):
                     st["exit_move"]()
-                if not st.get("resizing"):       # don't fight a live resize drag
+                if not st.get("resizing"):
                     paint(pw, cfg)
                 if not st.get("moving"):
                     key = (st.get("w"), st.get("h"), cfg.get("monitor"), cfg.get("top"),
@@ -2841,11 +2670,6 @@ def run_window(interval=2.0):
     tick()
     GLib.timeout_add(int(interval * 1000), tick)
 
-    # Respond to settings changes near-instantly without cranking the (heavy)
-    # metric refresh above. Reading the small settings file is cheap, so poll it
-    # often and re-render only when its *contents* change — a content hash, not
-    # the mtime, because a coarse filesystem mtime can collapse two quick edits
-    # (a section toggled off then on) into no visible change.
     def _settings_stamp():
         try:
             with open(SETTINGS_FILE, "rb") as f:
@@ -2857,9 +2681,6 @@ def run_window(interval=2.0):
         stamp = _settings_stamp()
         if stamp != watch_settings.stamp:
             watch_settings.stamp = stamp
-            # Two render passes converge the flex fill for the new layout, then
-            # the panel is placed once at its final size (no "springt hin und
-            # her" when sections are toggled).
             tick(passes=2)
         return True
 
@@ -2868,7 +2689,6 @@ def run_window(interval=2.0):
 
     log(f"panel started (pid {os.getpid()})")
     Gtk.main()
-
 
 def run_settings():
     """A small GTK window that reads and writes settings.json. Nothing here is
@@ -2882,11 +2702,6 @@ def run_settings():
 
     _apply_window_icon(Gtk)
 
-    # Opening Settings also brings the panel up, so the app works even when
-    # autostart never ran — that's why there's no separate "panel" menu entry.
-    # The running panel holds an exclusive lock on LOCK_FILE for its whole life;
-    # if we can take that lock then none is running, so we release it and start
-    # one. A second panel would exit on the same lock, so this never doubles up.
     try:
         _probe = open(LOCK_FILE, "a+")
         try:
@@ -2895,7 +2710,7 @@ def run_settings():
             subprocess.Popen([sys.executable, os.path.abspath(__file__)],
                              start_new_session=True)
         except OSError:
-            pass                       # locked -> a panel is already running
+            pass
         finally:
             _probe.close()
     except Exception:
@@ -3031,8 +2846,6 @@ def run_settings():
     win.set_border_width(0)
     win.set_default_size(500, 840)
 
-    # Outer layout: everything scrolls (header included), with only the action
-    # bar pinned at the bottom.
     outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
     win.add(outer)
 
@@ -3084,14 +2897,10 @@ def run_settings():
             grid.attach(widget, 0, counter[0], 2, 1)
         counter[0] += 1
 
-    # ---- Panels ----------------------------------------------------------
-    # Each panel is edited on its own. Pick it here and every control below
-    # (margins, sections, order, disks, sensors, unit) reads and writes that
-    # one panel's config; placement (move/resize) already acts per panel.
     pbox, pg, pc = make_group("Panels")
     disp = Gdk.Display.get_default()
-    editing = [0]                 # index of the panel the controls are bound to
-    _loading = [False]            # True while load_panel() sets the controls
+    editing = [0]
+    _loading = [False]
 
     def _panels():
         return [dict(c) for c in (load_settings().get("panels") or [{}])]
@@ -3151,7 +2960,7 @@ def run_settings():
     def toggle_move(*_):
         idx = editing[0]
         st = dict(load_settings())
-        if st.get("move") == idx:                 # second click -> save & stop
+        if st.get("move") == idx:
             st["move"] = None
             save_settings(st)
             status.set_text("Position saved.")
@@ -3165,9 +2974,8 @@ def run_settings():
         st = dict(load_settings())
         cfgs = [dict(c) for c in (st.get("panels") or [{}])]
         src = cfgs[editing[0]] if editing[0] < len(cfgs) else cfgs[0]
-        new = dict(src)                           # inherit the display config
+        new = dict(src)
         if dup and (src.get("name") or "").strip():
-            # name the copy "<name> 2", "<name> 3", … (next free number)
             base = (src["name"] or "").strip()
             head, _, tail = base.rpartition(" ")
             root = head.strip() if (head and tail.isdigit()) else base
@@ -3176,7 +2984,7 @@ def run_settings():
             while f"{root} {n}" in existing:
                 n += 1
             new["name"] = f"{root} {n}"
-        elif not dup:                             # a plain Add is a fresh, unnamed panel
+        elif not dup:
             new.pop("name", None)
             new["position"], new["offset"] = "top-left", None
         new["monitor"] = 1 if _nmon() > 1 else new.get("monitor", 0)
@@ -3240,8 +3048,6 @@ def run_settings():
         return panel_box(pcfg, mon.get_workarea())[4]
 
     _m0 = _resolved_margins(_P0)
-    # Four independent edge margins. Top+bottom set the height and vertical
-    # position; left+right set the width and horizontal position.
     margin_spins = {}
     for _key, _lbl in (("top", "Top"), ("bottom", "Bottom"), ("left", "Left"), ("right", "Right")):
         sp = _noscroll(Gtk.SpinButton.new_with_range(0, 4000, 1))
@@ -3252,25 +3058,21 @@ def run_settings():
         field(pg, pc, _lbl, sp)
         margin_spins[_key] = sp
 
-
-    # ---- Weather ---------------------------------------------------------
     _, wg, wc = make_group("Weather")
     loc = s.get("location") or {}
     loc_state = {"data": loc or None}
     town = Gtk.Entry()
     town.set_placeholder_text("Town or city")
-    town.set_text(loc.get("name", ""))          # the chosen city sits in the field
+    town.set_text(loc.get("name", ""))
     lookup = Gtk.Button(label="Look up")
     locbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
     locbox.pack_start(town, True, True, 0)
     locbox.pack_start(lookup, False, False, 0)
     field(wg, wc, "Location", locbox)
     loc_label = _cls(Gtk.Label(label="", xalign=0), "result")
-    loc_label.set_no_show_all(True)             # only appears to report a lookup
+    loc_label.set_no_show_all(True)
     field(wg, wc, "", loc_label)
 
-    # Weather has its own °C/°F, separate from the hardware temperatures below,
-    # and the location name can be hidden.
     wunit_combo = _noscroll(Gtk.ComboBoxText())
     wunit_combo.append("c", "Celsius (°C)")
     wunit_combo.append("f", "Fahrenheit (°F)")
@@ -3303,7 +3105,6 @@ def run_settings():
         loc_label.set_visible(True)
     lookup.connect("clicked", do_lookup)
 
-    # ---- Panel sections --------------------------------------------------
     _, seg, sec_ = make_group("Panel sections")
     secgrid = Gtk.Grid(row_spacing=8, column_spacing=24)
     checks = {}
@@ -3314,10 +3115,6 @@ def run_settings():
         secgrid.attach(cb, idx % 2, idx // 2, 1, 1)
     field(seg, sec_, "", secgrid)
 
-    # ---- Order (drag to reorder) ----------------------------------------
-    # A list of just the enabled sections that the user can drag into any
-    # order; that order drives the render top-to-bottom. Toggling a section
-    # above adds or removes its row here without disturbing the rest.
     _, og, oc = make_group("Order")
     full_order = list(_P0.get("order") or SECTION_ORDER)
     order_list = Gtk.ListBox()
@@ -3326,11 +3123,6 @@ def run_settings():
     ROW_TARGET = [Gtk.TargetEntry.new("HUD_ROW", Gtk.TargetFlags.SAME_APP, 0)]
     drag_src = {"key": None}
 
-    # The drag source/target sits on an EventBox inside each row, not on the
-    # GtkListBoxRow itself: the list box claims the row's button-press for its
-    # own selection handling, so a source set on the row never sees the motion
-    # that would start a drag. The EventBox is a child with its own window and
-    # gets the press first.
     def _on_drag_begin(widget, ctx):
         drag_src["key"] = widget.key
         widget.row.get_style_context().add_class("dragging")
@@ -3395,7 +3187,6 @@ def run_settings():
     field(og, oc, "", order_list)
     _rebuild_order_rows()
 
-    # ---- Disks -----------------------------------------------------------
     _, dg, dc = make_group("Disks")
     cur_disks = _P0.get("disks") or ["/"]
     disk_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=7)
@@ -3408,7 +3199,6 @@ def run_settings():
         disk_box.pack_start(cb, False, False, 0)
     field(dg, dc, "", disk_box)
 
-    # ---- Temperature -----------------------------------------------------
     _, tg, tc = make_group("Temperature")
     units_combo = _noscroll(Gtk.ComboBoxText())
     units_combo.append("c", "Celsius (°C)")
@@ -3447,9 +3237,6 @@ def run_settings():
     tc[0] += 1
     field(tg, tc, "", _cls(Gtk.Label(label="Up to 4 sensors are shown in the panel.", xalign=0), "hint"))
 
-    # Custom display names for the chosen sensors, rebuilt as the selection (or
-    # the edited panel) changes. Names are shared across panels — a sensor is
-    # the same sensor everywhere; the placeholder is the auto-detected name.
     sensor_names_state = dict(s.get("sensor_names") or {})
     _sensmap = {se["id"]: se for se in sensors}
     names_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
@@ -3489,7 +3276,6 @@ def run_settings():
     tg.attach(names_box, 1, tc[0], 1, 1)
     tc[0] += 1
 
-    # ---- Devices ---------------------------------------------------------
     _, deg, dec = make_group("Devices")
     cur_periph = _P0.get("peripherals") or []
     periph_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=7)
@@ -3507,7 +3293,6 @@ def run_settings():
                            xalign=0), "hint"), False, False, 0)
     field(deg, dec, "", periph_box)
 
-    # ---- Bottom action bar (fixed) --------------------------------------
     actionbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
     _cls(actionbar, "actionbar")
     actionbar.set_border_width(16)
@@ -3519,16 +3304,13 @@ def run_settings():
     outer.pack_start(actionbar, False, False, 0)
 
     def commit(*_):
-        if _loading[0]:                      # ignore the signals load_panel() fires
+        if _loading[0]:
             return
         new = dict(load_settings())
-        # Shared weather fields (location/unit/sensor names) are *not* touched
-        # here — they have their own commit_weather(), so toggling a section can
-        # never clobber the saved location the way it used to.
         cfgs = [dict(c) for c in (new.get("panels") or [{"monitor": 0}])]
-        idx = max(0, min(editing[0], len(cfgs) - 1))   # clamp, never append phantoms
-        pcfg = dict(cfgs[idx])              # keeps the on-disk margins as they are
-        pcfg["weather_show_location"] = showloc_chk.get_active()   # per panel
+        idx = max(0, min(editing[0], len(cfgs) - 1))
+        pcfg = dict(cfgs[idx])
+        pcfg["weather_show_location"] = showloc_chk.get_active()
         pcfg["units"] = units_combo.get_active_id() or "c"
         pcfg["sections"] = {k: cb.get_active() for k, cb in checks.items()}
         pcfg["order"] = list(full_order)
@@ -3541,17 +3323,13 @@ def run_settings():
         cfgs[idx] = pcfg
         new["panels"] = cfgs
         save_settings(new)
-        _own_stamp[0] = _file_stamp()      # remember our own write (see watcher)
+        _own_stamp[0] = _file_stamp()
 
     def commit_weather(*_):
-        # Shared (not per-panel): the weather location + unit and the custom
-        # sensor names. Written onto fresh on-disk settings and only from the
-        # widgets that actually own these values, so a section toggle elsewhere
-        # never rewrites (and used to wipe) the location.
         if _loading[0]:
             return
         new = dict(load_settings())
-        if loc_state["data"]:                      # never overwrite with nothing
+        if loc_state["data"]:
             new["location"] = loc_state["data"]
         new["weather_units"] = wunit_combo.get_active_id() or "c"
         new["sensor_names"] = {k: v.strip() for k, v in sensor_names_state.items() if v.strip()}
@@ -3559,9 +3337,6 @@ def run_settings():
         _own_stamp[0] = _file_stamp()
 
     def commit_margins(*_):
-        # The four margin spinners write only the margins, onto the panel's
-        # current on-disk config — so a section toggle never clobbers a
-        # hand-dragged position, and vice versa.
         if _loading[0]:
             return
         new = dict(load_settings())
@@ -3576,8 +3351,6 @@ def run_settings():
         _own_stamp[0] = _file_stamp()
 
     def commit_name(*_):
-        # Writes only the panel's display name (onto its current on-disk config)
-        # and refreshes the picker label.
         if _loading[0]:
             return
         new = dict(load_settings())
@@ -3625,7 +3398,6 @@ def run_settings():
         finally:
             _loading[0] = False
 
-    # every control applies itself immediately — no Save button
     name_entry.connect("changed", commit_name)
     units_combo.connect("changed", commit)
     wunit_combo.connect("changed", commit_weather)
@@ -3634,7 +3406,7 @@ def run_settings():
     def _on_section_toggle(*_):
         if _loading[0]:
             return
-        _rebuild_order_rows()       # add/remove this section's row in the order list
+        _rebuild_order_rows()
         commit()
     for _cb in checks.values():
         _cb.connect("toggled", _on_section_toggle)
@@ -3642,7 +3414,7 @@ def run_settings():
     def _on_sensor_toggle(*_):
         if _loading[0]:
             return
-        rebuild_sensor_names()      # add/remove this sensor's name field
+        rebuild_sensor_names()
         commit()
     for _cb in sens_checks.values():
         _cb.connect("toggled", _on_sensor_toggle)
@@ -3662,9 +3434,6 @@ def run_settings():
     _own_stamp = [_file_stamp()]
 
     def _watch_external():
-        # If settings.json changed underneath us — the panel saving a hand-drag
-        # or grip resize — reload the edited panel's controls, so a later edit
-        # doesn't write the stale margins back over the new position/size.
         cur = _file_stamp()
         if cur != _own_stamp[0]:
             _own_stamp[0] = cur
@@ -3675,20 +3444,19 @@ def run_settings():
     GLib.timeout_add(400, _watch_external)
 
     _refill_combo()
-    load_panel()                # sync every control (incl. the name field)
+    load_panel()
     refresh_move_labels()
 
     win.connect("destroy", Gtk.main_quit)
     win.show_all()
     Gtk.main()
 
-
 if __name__ == "__main__":
     if "--settings" in sys.argv:
         run_settings()
     elif "--png" in sys.argv:
         _M = gather_frame()
-        _, _fl, _ = render(frame=_M, write_png=False)   # settle the flex fill
+        _, _fl, _ = render(frame=_M, write_png=False)
         render(frame=_M, flex_in=_fl, write_png=True)
         for _t in threading.enumerate():
             if _t is not threading.main_thread():
@@ -3703,11 +3471,7 @@ if __name__ == "__main__":
         _lock.truncate()
         _lock.write(str(os.getpid()))
         _lock.flush()
-        # Guess a weather location from the public IP if none is set yet, off
-        # the main thread so it never delays the panel (no-op once configured).
         threading.Thread(target=autodetect_location, daemon=True).start()
-        # First run ever: open the settings window once so a new user lands
-        # straight in the configuration. A marker keeps it to the first time.
         _welcome = os.path.join(CONF_DIR, ".welcomed")
         if not os.path.exists(_welcome):
             try:

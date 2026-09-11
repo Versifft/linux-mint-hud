@@ -11,7 +11,6 @@ import urllib.request
 
 from browser_cookie import USER_AGENT, any_profile, load_cookie
 
-
 def _claude_bin():
     """Locate the Claude Code CLI. shutil.which first, then the usual install
     spots — the panel can be launched (e.g. by the package's post-install hook
@@ -28,7 +27,6 @@ def _claude_bin():
         if os.path.exists(c):
             return c
     return None
-
 
 def get_org_id():
     """Organisation id from the Claude Code CLI, or None if it is not
@@ -47,10 +45,8 @@ def get_org_id():
     except (ValueError, KeyError):
         raise RuntimeError("claude auth status returned nothing usable")
 
-
 WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday",
             "friday", "saturday", "sunday")
-
 
 def fmt_when(resets_at):
     """Absolute local time for a reset that is days out.
@@ -71,7 +67,6 @@ def fmt_when(resets_at):
         return f"tomorrow {dt:%H:%M}"
     return f"{WEEKDAYS[dt.weekday()]} {dt:%H:%M}"
 
-
 def fmt_delta(resets_at):
     try:
         dt = datetime.datetime.fromisoformat(resets_at.replace("Z", "+00:00"))
@@ -88,7 +83,6 @@ def fmt_delta(resets_at):
         return f"{h}h{m:02d}m"
     return f"{m}m"
 
-
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     """Refuse redirects outright.
 
@@ -101,9 +95,7 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
 
-
 _OPENER = urllib.request.build_opener(_NoRedirect)
-
 
 def fetch(org_id, cookie, tries=3):
     req = urllib.request.Request(
@@ -114,11 +106,6 @@ def fetch(org_id, cookie, tries=3):
             "User-Agent": USER_AGENT,
         },
     )
-    # Cloudflare fronts this endpoint and hands back a transient 503 (its
-    # "error 1200: temporarily rate limited") or a 429 under light bursts — the
-    # very next request usually succeeds. Retry those a couple of times with a
-    # short backoff before giving up, so the panel doesn't show a bogus error
-    # for a hiccup. Auth failures (401/403) are not retried: they won't clear.
     for i in range(tries):
         try:
             with _OPENER.open(req, timeout=6) as resp:
@@ -128,7 +115,6 @@ def fetch(org_id, cookie, tries=3):
                 time.sleep(0.7 * (i + 1))
                 continue
             raise
-
 
 def main():
     """Prints one quota line, a short reason it could not, or NOTHING.
@@ -184,7 +170,6 @@ def main():
         parts.append(f"Week {weekly['percent']:.0f}% ({fmt_when(weekly['resets_at'])})")
 
     print("  |  ".join(parts) if parts else "no quota data")
-
 
 if __name__ == "__main__":
     main()

@@ -23,7 +23,6 @@ COOKIE_FILE = os.path.join(HOME, ".config/mint-hud/.claude_web_cookie")
 USER_AGENT = ("Mozilla/5.0 (X11; Linux x86_64; rv:150.0) "
               "Gecko/20100101 Firefox/150.0")
 
-
 def firefox_profile():
     """A browser profile holding a cookies.sqlite, or None if there is none.
 
@@ -52,7 +51,6 @@ def firefox_profile():
                     return p
     return None
 
-
 def read_cookies(profile):
     """Snapshot the store and read it. The -wal file must come along: Firefox
     writes in WAL mode, so recent cookie updates live there and copying only
@@ -75,11 +73,9 @@ def read_cookies(profile):
             con.close()
     return rows
 
-
 def build_header(rows):
     pairs = [f"{n}={v}" for n, v in rows if v]
     return "; ".join(pairs)
-
 
 def _rows_from_chromium():
     try:
@@ -87,7 +83,6 @@ def _rows_from_chromium():
         return chromium_cookies.read_cookies()
     except Exception:
         return []
-
 
 def load_cookie(write_cache=True):
     """Current cookie header. Returns (cookie, source), source one of
@@ -121,7 +116,6 @@ def load_cookie(write_cache=True):
             return cached, "cache"
     return None, "none"
 
-
 def any_profile():
     """True if any supported browser has a profile at all — used to tell
     'log in' from 'no browser here'."""
@@ -133,14 +127,12 @@ def any_profile():
     except Exception:
         return False
 
-
 def save_cookie(header):
     tmp = f"{COOKIE_FILE}.{os.getpid()}.tmp"
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as f:
         f.write(header + "\n")
     os.replace(tmp, COOKIE_FILE)
-
 
 if __name__ == "__main__":
     cookie, source = load_cookie()

@@ -14,7 +14,6 @@ CHROMIUM_DIRS = (
     ".var/app/org.chromium.Chromium/config/chromium",
 )
 
-
 def _keyring_password(app_hint):
     """The browser's own encryption password from the keyring, or None."""
     try:
@@ -40,13 +39,11 @@ def _keyring_password(app_hint):
                 return pw.encode("utf-8")
     return None
 
-
 def _derive(password):
     from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
     from cryptography.hazmat.primitives import hashes
     return PBKDF2HMAC(algorithm=hashes.SHA1(), length=16, salt=b"saltysalt",
                       iterations=1).derive(password)
-
 
 def _decrypt(blob, key_v10, key_v11):
     from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
@@ -68,7 +65,6 @@ def _decrypt(blob, key_v10, key_v11):
     except UnicodeDecodeError:
         return None
 
-
 def find_store():
     """(cookie-db path, app hint) for the first Chromium profile found."""
     home = os.path.expanduser("~")
@@ -78,7 +74,6 @@ def find_store():
             if os.path.exists(path):
                 return path, os.path.basename(base).lower()
     return None, None
-
 
 def read_cookies():
     """[(name, value), ...] for claude.ai, or [] if nothing is readable."""
@@ -112,7 +107,6 @@ def read_cookies():
         if val:
             out.append((name, val))
     return out
-
 
 if __name__ == "__main__":
     import sys

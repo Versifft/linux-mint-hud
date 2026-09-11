@@ -6,7 +6,6 @@ import sys
 import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-# Data lives per-user (the code may be installed read-only under /usr).
 DATA = os.path.join(os.path.expanduser("~"), ".config", "mint-hud")
 SETTINGS = os.path.join(DATA, "settings.json")
 CONF = os.path.join(DATA, "weather.json")
@@ -23,7 +22,6 @@ WMO = {
     85: "Snow showers", 86: "Snow showers",
     95: "Thunderstorm", 96: "Thunderstorm, hail", 99: "Thunderstorm, hail",
 }
-
 
 def load_conf():
     c = None
@@ -43,7 +41,6 @@ def load_conf():
     except Exception:
         return None
 
-
 def fetch(lat, lon):
     url = ("https://api.open-meteo.com/v1/forecast"
            f"?latitude={lat}&longitude={lon}"
@@ -53,7 +50,6 @@ def fetch(lat, lon):
     req = urllib.request.Request(url, headers={"User-Agent": "linux-mint-hud"})
     with urllib.request.urlopen(req, timeout=6) as resp:
         return json.loads(resp.read())
-
 
 def main():
     conf = load_conf()
@@ -76,7 +72,6 @@ def main():
         print(json.dumps(out))
     except Exception as e:
         print(f"weather: unreachable ({type(e).__name__})", file=sys.stderr)
-
 
 if __name__ == "__main__":
     main()
