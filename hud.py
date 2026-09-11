@@ -3051,14 +3051,6 @@ def run_settings():
         return panel_box(pcfg, _panel_wa(pcfg))[4]
 
     _m0 = _resolved_margins(_P0)
-    _wa0 = _panel_wa(_P0)
-    # The panel's box size (the margin spans). Fine-tuning a margin keeps this
-    # size fixed and moves the panel, so both edges of an axis are usable — see
-    # _on_margin(). Resizing stays on the corner grip.
-    pos_size = {"w": max(1, _wa0.width - _m0.get("left", 22) - _m0.get("right", 22)),
-                "h": max(1, _wa0.height - _m0.get("top", 22) - _m0.get("bottom", 22))}
-    _adjusting = [False]
-    _opp_edge = {"top": "bottom", "bottom": "top", "left": "right", "right": "left"}
     margin_spins = {}
     for _key, _lbl in (("top", "Top"), ("bottom", "Bottom"), ("left", "Left"), ("right", "Right")):
         sp = _noscroll(Gtk.SpinButton.new_with_range(0, 4000, 1))
@@ -3388,9 +3380,6 @@ def run_settings():
             _rm = _resolved_margins(pcfg)
             for _k, _sp in margin_spins.items():
                 _sp.set_value(_rm.get(_k, 22))
-            _wa = _panel_wa(pcfg)
-            pos_size["w"] = max(1, _wa.width - _rm.get("left", 22) - _rm.get("right", 22))
-            pos_size["h"] = max(1, _wa.height - _rm.get("top", 22) - _rm.get("bottom", 22))
             name_entry.set_text(pcfg.get("name", "") or "")
             units_combo.set_active_id(pcfg.get("units", "c"))
             showloc_chk.set_active(bool(pcfg.get("weather_show_location", True)))
@@ -3434,33 +3423,8 @@ def run_settings():
         _cb.connect("toggled", _on_sensor_toggle)
     for _cb in (list(disk_checks.values()) + list(periph_checks.values())):
         _cb.connect("toggled", commit)
-
-    def _on_margin(edge):
-        # Fine-tuning a margin repositions the panel from that edge, keeping the
-        # box size fixed: the opposite margin is moved by the same amount, so
-        # (opposite + size + this) still spans the work area. That way all four
-        # margins move the panel — top/left from one side, bottom/right from the
-        # other — instead of two of them only resizing. Resizing is the grip's job.
-        if _loading[0] or _adjusting[0]:
-            return
-        cfgs = _panels()
-        pcfg = cfgs[editing[0]] if editing[0] < len(cfgs) else {}
-        wa = _panel_wa(pcfg)
-        vertical = edge in ("top", "bottom")
-        span = pos_size["h"] if vertical else pos_size["w"]
-        extent = wa.height if vertical else wa.width
-        val = int(margin_spins[edge].get_value())
-        opp = _opp_edge[edge]
-        opp_val = max(0, extent - val - int(span or 0))
-        _adjusting[0] = True
-        try:
-            margin_spins[opp].set_value(opp_val)
-        finally:
-            _adjusting[0] = False
-        commit_margins()
-
-    for _k in margin_spins:
-        margin_spins[_k].connect("value-changed", lambda _s, _k=_k: _on_margin(_k))
+    for _sp in margin_spins.values():
+        _sp.connect("value-changed", commit_margins)
     close.connect("clicked", lambda *_: win.close())
 
     def _file_stamp():
