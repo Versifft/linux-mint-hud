@@ -52,8 +52,6 @@ def fetch(lat, lon):
         return json.loads(resp.read())
 
 def main():
-    # Coordinates may be passed as args (lat lon [name]) so the panel can fetch a
-    # different city per panel; with none, fall back to the saved location.
     conf = None
     if len(sys.argv) >= 3:
         try:

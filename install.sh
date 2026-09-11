@@ -1,8 +1,4 @@
 #!/usr/bin/env bash
-#
-# Guided installer for linux-mint-hud. Asks before it touches anything, skips
-# what is already in place, and can be re-run safely.
-#
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -13,7 +9,6 @@ bold() { printf '\033[1m%s\033[0m\n' "$1"; }
 info() { printf '  %s\n' "$1"; }
 ok()   { printf '  \033[32m✓\033[0m %s\n' "$1"; }
 
-# ask "question" default(y/n) -> returns 0 for yes
 ask() {
     local q="$1" def="${2:-y}" reply hint="[Y/n]"
     [ "$def" = n ] && hint="[y/N]"
@@ -32,7 +27,6 @@ bold "linux-mint-hud installer"
 info "Installing from: $HERE"
 echo
 
-# ---- 1. core dependencies ------------------------------------------------
 CORE=(python3-pil python3-gi python3-gi-cairo python3-cairo)
 missing=()
 for p in "${CORE[@]}"; do
@@ -53,7 +47,6 @@ else
 fi
 echo
 
-# ---- 2. optional: Chromium quota support ---------------------------------
 EXTRA=(python3-cryptography gir1.2-secret-1)
 extra_missing=()
 for p in "${EXTRA[@]}"; do
@@ -75,7 +68,6 @@ if [ ${#extra_missing[@]} -gt 0 ]; then
     echo
 fi
 
-# ---- 2b. weather location -----------------------------------------------
 if [ ! -f "$HERE/weather.json" ]; then
     bold "Weather"
     info "When Claude quota is unavailable the top slot can show local weather"
@@ -83,7 +75,6 @@ if [ ! -f "$HERE/weather.json" ]; then
     if ask "Set a weather location?" n; then
         read -r -p "  Town or city: " town </dev/tty
         if [ -n "$town" ]; then
-            # geocode via open-meteo, no key, then store only the coordinates
             python3 - "$town" "$HERE/weather.json" <<'PY'
 import json, sys, urllib.parse, urllib.request
 town, out = sys.argv[1], sys.argv[2]
@@ -106,11 +97,7 @@ PY
     echo
 fi
 
-# ---- 3. fonts ------------------------------------------------------------
 bold "Fonts"
-# capture once and match with here-strings: piping fc-list into grep -q makes
-# grep close the pipe early, fc-list dies on SIGPIPE, and under pipefail the
-# whole test then reports failure even when the font is present
 installed_fonts="$(fc-list)"
 if grep -qi "JetBrains Mono" <<<"$installed_fonts" \
    && grep -qi "Inter:" <<<"$installed_fonts"; then
@@ -139,7 +126,6 @@ else
 fi
 echo
 
-# ---- 4. system power reading (optional, security tradeoff) ---------------
 if compgen -G "/sys/class/powercap/intel-rapl:*" >/dev/null 2>&1; then
     bold "Full system power reading (optional)"
     info "On mains the battery reports nothing, so the panel can't show draw."
@@ -159,7 +145,6 @@ if compgen -G "/sys/class/powercap/intel-rapl:*" >/dev/null 2>&1; then
     echo
 fi
 
-# ---- 5. autostart --------------------------------------------------------
 bold "Start on login"
 if [ -f "$AUTOSTART" ] && grep -q "$HERE/hud.py" "$AUTOSTART" 2>/dev/null; then
     ok "Autostart already points here."
@@ -182,14 +167,12 @@ else
 fi
 echo
 
-# ---- 5b. application menu entries ----------------------------------------
 bold "Menu entries"
 APPS="$HOME/.local/share/applications"
 info "These add 'Linux Mint HUD — Settings' (the graphical settings) and an"
 info "uninstaller to your application menu, so you don't need a terminal."
 if ask "Add menu entries?"; then
     mkdir -p "$APPS"
-    # install our icon into the user's hicolor theme so Icon=mint-hud resolves
     ICONDIR="$HOME/.local/share/icons/hicolor"
     for s in 16 24 32 48 64 128 256; do
         [ -f "$HERE/icons/mint-hud-$s.png" ] || continue
@@ -235,7 +218,6 @@ else
 fi
 echo
 
-# ---- 6. start now --------------------------------------------------------
 if pgrep -f "hud[.]py$" >/dev/null; then
     ok "The panel is already running."
 elif ask "Start it now?"; then

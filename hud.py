@@ -87,7 +87,7 @@ DEFAULT_SETTINGS = {
     "weather_units": "c",
     "weather_show_location": True,
     "sensor_names": {},
-    "peripheral_names": {},        # {peripheral id: custom label}, like sensor_names
+    "peripheral_names": {},
     "units": "c",
     "disks": None,
     "sensors": None,
@@ -790,10 +790,6 @@ def _upower_peripherals():
                 d["state"] = ln.split(":", 1)[1].strip()
         if psupply == "no" and "cap" in d:
             name = d.get("name") or "device"
-            # id off the tidied name, so the Bluetooth-LE 'LE_' prefix that comes
-            # and goes across reconnects doesn't change a device's identity (and
-            # break a saved selection). Same reason the panel keeps a device that
-            # is momentarily gone.
             devs.append({"id": "upower:" + _periph_short(name), "name": name,
                          "capacity": d["cap"],
                          "status": "Charging" if d.get("state") == "charging" else "Discharging"})
@@ -826,7 +822,6 @@ def peripheral_batteries():
             out.append(u)
     return out
 
-
 def _periph_short(name):
     """A tidier default label for a peripheral: drop the Bluetooth-LE 'LE_'
     advertised-name prefix and a trailing '-battery', so 'LE_WH-1000XM3' shows
@@ -837,7 +832,6 @@ def _periph_short(name):
     if n.lower().endswith("-battery"):
         n = n[:-len("-battery")]
     return n.strip() or "device"
-
 
 def _periph_name_from_id(pid):
     """Recover a display name from a peripheral id, so a selected device that is
@@ -1450,13 +1444,8 @@ def panel_box(cfg, wa):
         left, right = int(left), int(right)
         span = wa.width - left - right
         if span >= W:
-            w = span                       # both edges honoured exactly
+            w = span
         else:
-            # The inset is narrower than the native width, so the panel can't be
-            # that narrow — it sits at W. Anchor the edge the panel hugs (the
-            # smaller gap) and cap the far margin to its effective value, so
-            # there is no dead range where nudging the far margin does nothing
-            # and the panel never overflows the screen.
             w = W
             if right <= left:
                 left = max(0, wa.width - w - right)
@@ -1617,7 +1606,6 @@ def panel_bg(H, width=W):
     _PANEL_CACHE[key] = panel
     return panel
 
-
 def weather_for(loc):
     """Current weather for one location, cached per-location so each panel can
     watch its own city. `loc` is {lat, lon, name}; returns the parsed dict or
@@ -1637,7 +1625,6 @@ def weather_for(loc):
         except Exception:
             return None
     return None
-
 
 def gather_frame():
     """Sample every metric once per tick and advance the delta/history state.
@@ -1762,7 +1749,7 @@ def gather_frame():
             pass
     have_claude = bool(sess or week)
 
-    weather = weather_for(_loc)          # the global location; a panel may override
+    weather = weather_for(_loc)
     have_weather = weather is not None
 
     if not HISTORY:
@@ -1837,9 +1824,6 @@ def render(frame=None, cfg=None, target_h=None, flex_in=0.0, width=None, write_p
         M["power_src"], M["cpu_t"], M["nvme_t"], M["wifi_t"], M["uptime"],
         M["load"], M["sess"], M["week"], M["have_claude"], M["weather"],
         M["have_weather"], M["top_cpu"], M["top_mem"])
-    # Per-panel weather: when this panel names its own city, fetch that one
-    # instead of the shared/global location the frame carries — so two panels
-    # can show two cities.
     if cfg.get("location"):
         weather = weather_for(cfg["location"])
         have_weather = weather is not None
@@ -2157,10 +2141,6 @@ def render(frame=None, cfg=None, target_h=None, flex_in=0.0, width=None, write_p
         periph_sel = periph_sel_cfg or []
         if not periph_sel:
             return y
-        # Show every selected device in its saved order, present or not. A
-        # device that is off/out of range (absent from the live list) stays put
-        # and is shown as disconnected, rather than dropping out and reshuffling
-        # the panel — and it reappears on its own when it reconnects.
         present = {p["id"]: p for p in peripheral_batteries()}
         rows = [present.get(pid) or {"id": pid, "name": _periph_name_from_id(pid),
                                      "capacity": None, "status": "disconnected"}
@@ -2170,7 +2150,7 @@ def render(frame=None, cfg=None, target_h=None, flex_in=0.0, width=None, write_p
         for p in rows:
             nm = PERIPH_NAMES.get(p["id"]) or _periph_short(p["name"])
             dcap = p["capacity"]
-            if dcap is None:                       # disconnected / no reading
+            if dcap is None:
                 text(d, PAD, y - 2, nm[:22], F(UI_MED, T_BODY), MUTE)
                 text(d, R, y - 2, "disconnected", F(UI_MED, T_MICRO), MUTE, anchor="r")
                 y += 15
@@ -2456,12 +2436,6 @@ def run_window(interval=2.0):
         if img is None:
             return None
         wa = monitor_of(cfg).get_workarea()
-        # Scale down only when the content is taller than the whole work area —
-        # a genuinely oversized panel. A panel that merely sits low on the
-        # screen is left at native size and slid up to fit by place(); scaling it
-        # to the space *below* its top used to shrink its width too, which left a
-        # gap on the anchored side and made the fine-tune margins disagree with
-        # where the panel actually was.
         maxh = wa.height - 2
         if img.height > maxh > 0:
             k = maxh / img.height
@@ -3051,7 +3025,7 @@ def run_settings():
         cfgs = [dict(c) for c in (st.get("panels") or [{}])]
         src = cfgs[editing[0]] if editing[0] < len(cfgs) else cfgs[0]
         if dup:
-            new = dict(src)                    # a true copy of the current panel
+            new = dict(src)
             if (src.get("name") or "").strip():
                 base = (src["name"] or "").strip()
                 head, _, tail = base.rpartition(" ")
@@ -3062,8 +3036,6 @@ def run_settings():
                     n += 1
                 new["name"] = f"{root} {n}"
         else:
-            # a fresh panel: every section on, default placement, no inherited
-            # selections/renames — nothing copied from the current one.
             new = {"monitor": src.get("monitor", 0),
                    "sections": {k: True for k in SECTION_ORDER},
                    "order": list(SECTION_ORDER),
@@ -3143,7 +3115,7 @@ def run_settings():
         margin_spins[_key] = sp
 
     _, wg, wc = make_group("Weather")
-    loc = _P0.get("location") or s.get("location") or {}   # per panel, global fallback
+    loc = _P0.get("location") or s.get("location") or {}
     loc_state = {"data": loc or None}
     town = Gtk.Entry()
     town.set_placeholder_text("Town or city")
@@ -3181,7 +3153,7 @@ def run_settings():
             loc_label.get_style_context().remove_class("result")
             loc_label.get_style_context().add_class("result-ok")
             loc_label.set_text(f"✓ {res['name']}, {res.get('admin1', '')} {res['country_code']}")
-            commit()                       # location is per panel now
+            commit()
         except Exception:
             loc_label.get_style_context().remove_class("result-ok")
             loc_label.get_style_context().add_class("result")
@@ -3367,10 +3339,6 @@ def run_settings():
     periph_checks = {}
 
     def rebuild_periph_rows(sel):
-        # Rebuilt per panel: one row per device — a tick to show it plus a field
-        # to rename it. Devices that are selected but currently off/out of range
-        # are listed too (as "(off)", still ticked), so they aren't lost and the
-        # panel keeps showing them as disconnected until they come back.
         for c in periph_box.get_children():
             periph_box.remove(c)
         periph_checks.clear()
@@ -3429,9 +3397,9 @@ def run_settings():
         idx = max(0, min(editing[0], len(cfgs) - 1))
         pcfg = dict(cfgs[idx])
         pcfg["weather_show_location"] = showloc_chk.get_active()
-        pcfg["weather_units"] = wunit_combo.get_active_id() or "c"   # per panel
+        pcfg["weather_units"] = wunit_combo.get_active_id() or "c"
         if loc_state["data"]:
-            pcfg["location"] = loc_state["data"]                     # per panel
+            pcfg["location"] = loc_state["data"]
         pcfg["units"] = units_combo.get_active_id() or "c"
         pcfg["sections"] = {k: cb.get_active() for k, cb in checks.items()}
         pcfg["order"] = list(full_order)
@@ -3447,8 +3415,6 @@ def run_settings():
         _own_stamp[0] = _file_stamp()
 
     def commit_sensor_names(*_):
-        # Shared custom sensor labels (weather location + unit are per panel now,
-        # committed in commit()).
         if _loading[0]:
             return
         new = dict(load_settings())
@@ -3457,7 +3423,6 @@ def run_settings():
         _own_stamp[0] = _file_stamp()
 
     def commit_periph_names(*_):
-        # Shared custom labels for peripherals (like sensor_names).
         if _loading[0]:
             return
         new = dict(load_settings())
@@ -3532,7 +3497,7 @@ def run_settings():
 
     name_entry.connect("changed", commit_name)
     units_combo.connect("changed", commit)
-    wunit_combo.connect("changed", commit)   # weather unit is per panel
+    wunit_combo.connect("changed", commit)
     showloc_chk.connect("toggled", commit)
 
     def _on_section_toggle(*_):
@@ -3550,7 +3515,7 @@ def run_settings():
         commit()
     for _cb in sens_checks.values():
         _cb.connect("toggled", _on_sensor_toggle)
-    for _cb in disk_checks.values():        # periph checkboxes are wired in rebuild_periph_rows
+    for _cb in disk_checks.values():
         _cb.connect("toggled", commit)
     for _sp in margin_spins.values():
         _sp.connect("value-changed", commit_margins)

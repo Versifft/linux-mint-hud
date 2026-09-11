@@ -1,14 +1,6 @@
 #!/usr/bin/env bash
-#
-# Build a .deb of linux-mint-hud that installs system-wide under /usr, so it can
-# be installed with a double-click (GDebi / Software Installer) and removed
-# through the normal package manager. Code goes read-only under /usr; each
-# user's settings/cache live in ~/.config/mint-hud.
-#
-#   ./build-deb.sh            -> dist/linux-mint-hud_<version>_all.deb
-#
 set -euo pipefail
-umask 022                      # so packaged dirs are 0755, not group-writable
+umask 022
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VERSION="1.1"
@@ -27,34 +19,25 @@ DOCDIR="$STAGE/usr/share/doc/$PKG"
 ICONROOT="$STAGE/usr/share/icons/hicolor"
 mkdir -p "$APPDIR" "$BINDIR" "$DESKDIR" "$AUTODIR" "$DOCDIR" "$STAGE/DEBIAN"
 
-# ---- application code (read-only) ----------------------------------------
 for f in hud.py weather.py claude_quota.py browser_cookie.py chromium_cookies.py \
          99-rapl-psys.rules; do
     install -m 0644 "$HERE/$f" "$APPDIR/$f"
 done
 chmod 0755 "$APPDIR/hud.py" "$APPDIR/weather.py" "$APPDIR/claude_quota.py"
 
-# ---- launcher ------------------------------------------------------------
 cat > "$BINDIR/mint-hud" <<'EOF'
 #!/bin/sh
 exec python3 /usr/share/mint-hud/hud.py "$@"
 EOF
 chmod 0755 "$BINDIR/mint-hud"
 
-# ---- icons (into the system hicolor theme + a pixmaps fallback) ----------
 for s in 16 24 32 48 64 128 256; do
     [ -f "$HERE/icons/mint-hud-$s.png" ] || continue
     install -D -m 0644 "$HERE/icons/mint-hud-$s.png" \
         "$ICONROOT/${s}x${s}/apps/mint-hud.png"
 done
-# a plain /usr/share/pixmaps copy resolves Icon=mint-hud even without an icon
-# cache, so the menu shows it regardless of theme-cache timing
 install -D -m 0644 "$HERE/icons/mint-hud-128.png" "$STAGE/usr/share/pixmaps/mint-hud.png"
 
-# ---- menu entry ----------------------------------------------------------
-# One entry only: opening it configures the panel and also starts the panel
-# if it isn't running (see run_settings), so there's no need for a separate
-# "launch the panel" item. The panel itself autostarts on login.
 cat > "$DESKDIR/mint-hud-settings.desktop" <<EOF
 [Desktop Entry]
 Type=Application
@@ -66,7 +49,6 @@ Terminal=false
 Categories=Settings;
 EOF
 
-# ---- autostart (per login session, runs as the user) ---------------------
 cat > "$AUTODIR/mint-hud.desktop" <<EOF
 [Desktop Entry]
 Type=Application
@@ -79,10 +61,6 @@ X-GNOME-Autostart-enabled=true
 X-GNOME-Autostart-Delay=3
 EOF
 
-# ---- APT source for updates ----------------------------------------------
-# Ship our signed repository as an apt source + keyring, so once installed the
-# app updates through the normal Update Manager whenever a new version is
-# published. The key is our repo-signing public key (armored in packaging/).
 mkdir -p "$STAGE/etc/apt/keyrings" "$STAGE/etc/apt/sources.list.d"
 gpg --dearmor < "$HERE/packaging/mint-hud-archive-keyring.asc" \
     > "$STAGE/etc/apt/keyrings/linux-mint-hud.gpg"
@@ -92,7 +70,6 @@ cat > "$STAGE/etc/apt/sources.list.d/linux-mint-hud.list" <<EOF
 deb [signed-by=/etc/apt/keyrings/linux-mint-hud.gpg] https://versifft.github.io/linux-mint-hud stable main
 EOF
 
-# ---- copyright -----------------------------------------------------------
 cat > "$DOCDIR/copyright" <<EOF
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: linux-mint-hud
@@ -103,7 +80,6 @@ Copyright: 2026 Versifft
 License: MIT
 EOF
 
-# ---- control + maintainer scripts ----------------------------------------
 INSTALLED_KB=$(du -sk "$STAGE/usr" "$STAGE/etc" 2>/dev/null | awk '{s+=$1} END{print s}')
 cat > "$STAGE/DEBIAN/control" <<EOF
 Package: $PKG
@@ -225,12 +201,10 @@ exit 0
 EOF
 chmod 0755 "$STAGE/DEBIAN/postinst" "$STAGE/DEBIAN/postrm"
 
-# ---- build ---------------------------------------------------------------
 DEB="$OUT/${PKG}_${VERSION}_all.deb"
 if dpkg-deb --build --root-owner-group "$STAGE" "$DEB" 2>/dev/null; then
     :
 else
-    # older dpkg-deb without --root-owner-group
     dpkg-deb --build "$STAGE" "$DEB"
 fi
 

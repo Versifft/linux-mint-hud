@@ -1,8 +1,4 @@
 #!/usr/bin/env bash
-#
-# One-line bootstrap: clone the repo and run the guided installer.
-#   bash <(curl -fsSL https://raw.githubusercontent.com/Versifft/linux-mint-hud/main/bootstrap.sh)
-#
 set -uo pipefail
 
 REPO="https://github.com/Versifft/linux-mint-hud.git"
@@ -22,6 +18,4 @@ else
 fi
 
 chmod +x "$DEST"/*.sh "$DEST/hud.py" 2>/dev/null || true
-# Prefer the graphical installer; it falls back to the terminal one itself when
-# there's no desktop session or no zenity.
 exec "$DEST/install-gui.sh"

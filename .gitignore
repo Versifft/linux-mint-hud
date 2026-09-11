@@ -1,32 +1,23 @@
-# The claude.ai session cookie. Never commit this — it is a live credential.
 .claude_web_cookie
 
-# Written every two seconds by the panel; nothing here is worth versioning.
 cache/
 __pycache__/
 *.pyc
 
-# Local editor/OS noise
 *.swp
 *~
 
-# Local weather location (personal); set per-machine.
 weather.json
 
-# Local settings (written by the settings window); machine-specific.
 settings.json
 
-# Timestamped backups the settings window writes; personal, never version.
 settings.json.bak.*
 weather.json.bak.*
 
-# Debian package build output
 build/
 dist/
 *.deb
 
-# Generated apt repository (published to gh-pages)
 apt/
 
-# First-run marker written by the panel.
 .welcomed

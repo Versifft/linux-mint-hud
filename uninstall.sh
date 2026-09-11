@@ -1,10 +1,4 @@
 #!/usr/bin/env bash
-#
-# Uninstaller for linux-mint-hud. Runs graphically (zenity) when launched from
-# the menu, and as a plain terminal prompt otherwise. It stops the panel and
-# removes what the installer added; deleting the app folder (with your settings)
-# is offered separately and off by default.
-#
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -22,7 +16,6 @@ rm_icons()     { rm -f "$HOME/.local/share/icons/hicolor/"*/apps/mint-hud.png 2>
 rm_rule()      { [ -f "$RULE" ] && pkexec rm -f "$RULE"; }
 rm_app()       { rm -rf "$HERE"; }
 
-# ------------------------------------------------------------------ graphical
 if [ "$GUI" = yes ]; then
     zenity --question --width=420 --title="Uninstall Linux Mint HUD" \
         --text="Remove Linux Mint HUD?\n\nThis stops the panel and removes its autostart and menu entries." \
@@ -54,7 +47,6 @@ if [ "$GUI" = yes ]; then
     exit 0
 fi
 
-# ------------------------------------------------------------------- terminal
 bold() { printf '\033[1m%s\033[0m\n' "$1"; }
 ask()  { local r; read -r -p "$1 [y/N] " r </dev/tty; [[ "$r" =~ ^[Yy] ]]; }
 

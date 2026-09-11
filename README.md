@@ -141,8 +141,8 @@ should work on other X11 desktops but hasn't been tested there.
 
 The supporting files: `weather.py` (open-meteo), `claude_quota.py` with
 `browser_cookie.py`/`chromium_cookies.py` (the Claude reading), `install.sh` /
-`install-gui.sh` / `uninstall.sh` / `bootstrap.sh` (setup), `build-deb.sh` and
-`publish-apt.sh` (packaging and updates), and `make_icon.py` (the app icon).
+`install-gui.sh` / `uninstall.sh` / `bootstrap.sh` (setup), and `build-deb.sh` /
+`publish-apt.sh` (packaging and updates).
 
 ## License
 
