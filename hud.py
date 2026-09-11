@@ -3029,19 +3029,24 @@ def run_settings():
         st = dict(load_settings())
         cfgs = [dict(c) for c in (st.get("panels") or [{}])]
         src = cfgs[editing[0]] if editing[0] < len(cfgs) else cfgs[0]
-        new = dict(src)
-        if dup and (src.get("name") or "").strip():
-            base = (src["name"] or "").strip()
-            head, _, tail = base.rpartition(" ")
-            root = head.strip() if (head and tail.isdigit()) else base
-            existing = {(p.get("name") or "").strip() for p in cfgs}
-            n = 2
-            while f"{root} {n}" in existing:
-                n += 1
-            new["name"] = f"{root} {n}"
-        elif not dup:
-            new.pop("name", None)
-            new["position"], new["offset"] = "top-left", None
+        if dup:
+            new = dict(src)                    # a true copy of the current panel
+            if (src.get("name") or "").strip():
+                base = (src["name"] or "").strip()
+                head, _, tail = base.rpartition(" ")
+                root = head.strip() if (head and tail.isdigit()) else base
+                existing = {(p.get("name") or "").strip() for p in cfgs}
+                n = 2
+                while f"{root} {n}" in existing:
+                    n += 1
+                new["name"] = f"{root} {n}"
+        else:
+            # a fresh panel: every section on, default placement, no inherited
+            # selections/renames — nothing copied from the current one.
+            new = {"monitor": src.get("monitor", 0),
+                   "sections": {k: True for k in SECTION_ORDER},
+                   "order": list(SECTION_ORDER),
+                   "top": MARGIN, "bottom": MARGIN, "left": None, "right": MARGIN}
         new["monitor"] = 1 if _nmon() > 1 else new.get("monitor", 0)
         cfgs.append(new)
         editing[0] = len(cfgs) - 1
