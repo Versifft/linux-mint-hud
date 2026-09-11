@@ -80,10 +80,24 @@ weather straight away (from open-meteo, no API key). To change it, use **Weather
 
 ## Claude quota
 
-The Claude section reads your usage from claude.ai using your browser session,
-so just stay **logged in to claude.ai** in Firefox or a Chromium-family browser
-(Chrome, Brave, Edge) and it keeps itself current. With no Claude login the slot
-simply shows the weather instead.
+The Claude section shows your claude.ai plan usage. It reads it straight from
+claude.ai using your **browser session cookie** — the same login you already
+use — so there are no keys or passwords to enter.
+
+It finds that cookie on its own from a running browser, so all you have to do is
+stay **logged in to claude.ai** in one of the supported browsers:
+
+- **Firefox** and its forks (LibreWolf, Waterfox, …)
+- **Chromium-family** browsers — Chrome, Chromium, Brave, Edge
+
+As long as you're logged in there, the slot keeps itself current; the cookie is
+only ever cached locally (`~/.config/mint-hud/.claude_web_cookie`, mode 600) and
+never leaves your machine except to claude.ai. With no Claude login at all, the
+slot simply shows the weather instead.
+
+**Using a different or unsupported browser?** You can hand the panel the cookie
+once, from a saved network capture — see **[Setting the Claude cookie by
+hand](docs/claude-cookie.md)**.
 
 ## How it's built
 

@@ -132,6 +132,13 @@ if [ "$1" = configure ]; then
     prev="${2:-}"        # previous version on an upgrade; empty on a fresh install
     gtk-update-icon-cache -f -t /usr/share/icons/hicolor >/dev/null 2>&1 || true
     update-desktop-database -q >/dev/null 2>&1 || true
+    # Nudge the menu to re-read the entry now that the icon cache is fresh: the
+    # Cinnamon/GNOME menus watch the applications dir and can cache "no icon" if
+    # they read the .desktop in the moment between dpkg unpacking it and the
+    # icon cache updating. Touching it fires the file monitor again, this time
+    # with the icon already resolvable.
+    touch /usr/share/applications/mint-hud-settings.desktop 2>/dev/null || true
+    update-desktop-database -q >/dev/null 2>&1 || true
 
     # After an upgrade we want the app to immediately run the new code, not the
     # old build still resident in memory. So we stop any running panel (and the
