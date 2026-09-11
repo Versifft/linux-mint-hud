@@ -2435,8 +2435,13 @@ def run_window(interval=2.0):
         if img is None:
             return None
         wa = monitor_of(cfg).get_workarea()
-        x, y, bw, bh, m = eff_margins(pw, cfg, wa)
-        maxh = wa.height - m["top"] - 2
+        # Scale down only when the content is taller than the whole work area —
+        # a genuinely oversized panel. A panel that merely sits low on the
+        # screen is left at native size and slid up to fit by place(); scaling it
+        # to the space *below* its top used to shrink its width too, which left a
+        # gap on the anchored side and made the fine-tune margins disagree with
+        # where the panel actually was.
+        maxh = wa.height - 2
         if img.height > maxh > 0:
             k = maxh / img.height
             return img.resize((max(120, round(img.width * k)), maxh), Image.LANCZOS)
