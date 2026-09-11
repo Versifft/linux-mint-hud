@@ -1915,7 +1915,12 @@ def render(frame=None, cfg=None, target_h=None, flex_in=0.0, width=None, write_p
         M["have_weather"], M["top_cpu"], M["top_mem"])
     FLEX = float(flex_in or 0.0)
     FLEX_POINTS = 0
-    img = Image.new("RGBA", (W * SS, 1400 * SS), (0, 0, 0, 0))
+    # Tall enough to hold the content stretched to fill the box: when the gaps
+    # spread out (target > natural) the lowest section sits near `target`, so
+    # the surface has to reach it or it would be clipped. `target` is the box
+    # height (work-area-bounded); the cap guards against a stray huge value.
+    surf_h = max(1400, min(int(target) + 40, 8000))
+    img = Image.new("RGBA", (W * SS, surf_h * SS), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
     y = 22
     R = W - PAD
@@ -2305,19 +2310,16 @@ def render(frame=None, cfg=None, target_h=None, flex_in=0.0, width=None, write_p
 
     H = int(round(y))
 
-    # Stretch the gaps between sections to fill TARGET_H (work area minus the
-    # two vertical margins). This fills to the bottom margin and, crucially,
-    # only changes the gaps — never the width — so toggling a section changes
-    # the height, not the width.
+    # Flex the gaps between sections to fill the box height (target = work area
+    # minus the top+bottom margins), changing only the gaps, never the width:
+    #  * target > natural: stretch the gaps (up to FLEX_MAX each), so making the
+    #    panel taller simply spreads the elements further apart.
+    #  * target <= natural: hold at the natural size — the gaps never shrink
+    #    below it (the hard floor), so the content can't be squashed.
     natural = y - FLEX_POINTS * FLEX
     next_flex = 0.0
     if FLEX_POINTS:
-        # The panel is as tall as its content: adding or removing a section
-        # grows or shrinks the window by that section. The gaps never *stretch*
-        # to fill the box height (that is the ceiling `target`); they only
-        # compress, down to FLEX_MIN, when the content would otherwise run past
-        # it. Either way the width stays native.
-        next_flex = max(FLEX_MIN, min(0.0, (target - natural) / FLEX_POINTS))
+        next_flex = max(0.0, min(FLEX_MAX, (target - natural) / FLEX_POINTS))
 
     panel = panel_bg(H, W)
 
@@ -2329,7 +2331,7 @@ def render(frame=None, cfg=None, target_h=None, flex_in=0.0, width=None, write_p
         out.save(tmp, "PNG", compress_level=1)
         os.replace(tmp, PNG_PATH)
 
-    return out, next_flex
+    return out, next_flex, int(round(natural))
 
 
 def log(msg):
@@ -2630,10 +2632,10 @@ def run_window(interval=2.0):
             wa = monitor_of(cfg).get_workarea()
             x, y, bw, bh, m = eff_margins(pw, cfg, wa)
             M = last_frame[0] if last_frame[0] is not None else gather_frame()
-            img, fl = st.get("img"), st.get("flex", 0.0)
+            img, fl, nat = st.get("img"), st.get("flex", 0.0), st.get("natural_h", 0)
             for _ in range(2):
-                img, fl = render(frame=M, cfg=cfg, width=int(bw), target_h=int(bh), flex_in=fl)
-            st["img"], st["flex"] = img, fl
+                img, fl, nat = render(frame=M, cfg=cfg, width=int(bw), target_h=int(bh), flex_in=fl)
+            st["img"], st["flex"], st["natural_h"] = img, fl, nat
             paint(pw, cfg)
             win.set_size_request(st["w"], st["h"])
             win.queue_draw()
@@ -2660,16 +2662,18 @@ def run_window(interval=2.0):
             if not (st.get("moving") and drag["active"]):
                 return False
             if drag.get("mode") == "resize":
-                # bottom-right grip: the horizontal drag sets the width (floored
-                # at the native width — it can be widened but never squeezed
-                # narrower than the content is designed for). The height is not
-                # draggable: it follows the content, so the vertical drag is
-                # inert and the panel keeps its natural height.
+                # bottom-right grip: free resize. The horizontal drag sets the
+                # width (floored at the native width — widen freely, never
+                # squeeze narrower than the content is designed for); the
+                # vertical drag sets the height, but only from the natural height
+                # upward — dragging taller spreads the gaps between elements,
+                # and the hard floor keeps it from squashing below natural.
                 m0, wa = drag["m0"], drag["wa"]
                 sw0, sh0 = drag["sw0"], drag["sh0"]
-                dx = ev.x_root - drag["sx"]
+                dx, dy = ev.x_root - drag["sx"], ev.y_root - drag["sy"]
+                floor_h = int(st.get("natural_h") or 120)
                 new_sw = min(max(W, int(sw0 + dx)), wa.width - m0["left"])
-                new_sh = sh0
+                new_sh = min(max(floor_h, int(sh0 + dy)), wa.height - m0["top"])
                 new_right = int(wa.width - m0["left"] - new_sw)
                 new_bottom = int(wa.height - m0["top"] - new_sh)
                 live_box[0] = {"idx": pw["idx"],
@@ -2788,10 +2792,10 @@ def run_window(interval=2.0):
             cfg = cfgs[i] if i < len(cfgs) else {}
             wa = monitor_of(cfg).get_workarea()
             x, y, bw, bh, m = eff_margins(pw, cfg, wa)
-            img, fl = st.get("img"), st.get("flex", 0.0)
+            img, fl, nat = st.get("img"), st.get("flex", 0.0), st.get("natural_h", 0)
             for _ in range(max(1, passes)):
-                img, fl = render(frame=M, cfg=cfg, width=bw, target_h=bh, flex_in=fl)
-            st["img"], st["flex"] = img, fl
+                img, fl, nat = render(frame=M, cfg=cfg, width=bw, target_h=bh, flex_in=fl)
+            st["img"], st["flex"], st["natural_h"] = img, fl, nat
 
     def tick(passes=1):
         try:
@@ -3684,7 +3688,7 @@ if __name__ == "__main__":
         run_settings()
     elif "--png" in sys.argv:
         _M = gather_frame()
-        _, _fl = render(frame=_M, write_png=False)   # settle the flex fill
+        _, _fl, _ = render(frame=_M, write_png=False)   # settle the flex fill
         render(frame=_M, flex_in=_fl, write_png=True)
         for _t in threading.enumerate():
             if _t is not threading.main_thread():
