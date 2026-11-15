@@ -3,7 +3,7 @@ set -euo pipefail
 umask 022
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VERSION="1.1"
+VERSION="2.0"
 PKG="linux-mint-hud"
 STAGE="$HERE/build/$PKG"
 OUT="$HERE/dist"
@@ -79,6 +79,30 @@ Files: *
 Copyright: 2026 Versifft
 License: MIT
 EOF
+
+# Debian changelog so Linux Mint's Update Manager (and apt) show "what's new".
+cat > "$DOCDIR/changelog.Debian" <<EOF
+linux-mint-hud ($VERSION) stable; urgency=medium
+
+  New:
+  * Horizontal top-bar panels (sections arranged left-to-right).
+  * Per-role text colours and a text-size scale, per panel.
+  * Album cover as the Spotify module background; a "Spotify closed" state.
+  * Multiple rotating weather locations per panel; US cities default to F.
+  * Custom-module catalog overhaul: new Crypto, Stocks, Indices and
+    Forex & metals categories, plus more System/Audio/Hardware/Homelab modules.
+  * Tray menu: Show panel, Alerts, What's new, About, Report a bug.
+  * More themes (now 19) with a palette overhaul; background-image zoom/tile.
+  Improved:
+  * Move & resize overhaul: interactive, reliable, true WYSIWYG placement.
+  * Experimental Wayland support via gtk-layer-shell (X11 remains the tested target).
+  Fixed:
+  * Add/Duplicate panel buttons, horizontal Spotify clicks, weather rotation
+    and sizing glitches, the background-image picker, and a batch of resize bugs.
+
+ -- Versifft <versifft@users.noreply.github.com>  $(date -R)
+EOF
+gzip -9n "$DOCDIR/changelog.Debian"
 
 INSTALLED_KB=$(du -sk "$STAGE/usr" "$STAGE/etc" 2>/dev/null | awk '{s+=$1} END{print s}')
 cat > "$STAGE/DEBIAN/control" <<EOF

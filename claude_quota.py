@@ -159,7 +159,8 @@ def main():
         print("web quota: unreachable")
         return
 
-    limits = {l["kind"]: l for l in data.get("limits", []) if l}
+    all_limits = [l for l in data.get("limits", []) if l]
+    limits = {l["kind"]: l for l in all_limits}
     session = limits.get("session")
     weekly = limits.get("weekly_all")
 
@@ -168,6 +169,15 @@ def main():
         parts.append(f"Session {session['percent']:.0f}% (in {fmt_delta(session['resets_at'])})")
     if weekly:
         parts.append(f"Week {weekly['percent']:.0f}% ({fmt_when(weekly['resets_at'])})")
+    # Per-model weekly limits (e.g. Fable, Opus): show each model's own usage and
+    # reset so the panel can surface more than the all-models figure.
+    for l in all_limits:
+        if l.get("group") != "weekly":
+            continue
+        model = ((l.get("scope") or {}).get("model") or {}).get("display_name")
+        pct = l.get("percent")
+        if model and pct is not None:
+            parts.append(f"{model} {pct:.0f}% ({fmt_when(l['resets_at'])})")
 
     print("  |  ".join(parts) if parts else "no quota data")
 
