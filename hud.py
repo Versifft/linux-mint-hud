@@ -40,7 +40,7 @@ PNG_PATH = os.path.join(CACHE_DIR, "hud.png")
 LOG_FILE = os.path.join(CACHE_DIR, "hud.log")
 LOCK_FILE = os.path.join(CACHE_DIR, "hud.lock")
 
-__version__ = "2.0"          # keep in sync with build-deb.sh VERSION
+__version__ = "2.0.1"        # keep in sync with build-deb.sh VERSION
 RELEASES_URL = "https://github.com/Versifft/linux-mint-hud/releases/latest"
 
 SETTINGS_FILE = os.path.join(CONF_DIR, "settings.json")
@@ -110,8 +110,10 @@ def price_command(coin, code, sep):
 def _stock_command(symbol):
     """Shell command for a quote from Yahoo Finance's public chart endpoint
     (no key): stocks, indices (^GSPC → %5EGSPC), FX pairs (EURUSD=X) and futures
-    (GC=F). Pulls regularMarketPrice; empty on error."""
-    return ("curl -s --max-time 8 'https://query1.finance.yahoo.com/v8/finance/"
+    (GC=F). Pulls regularMarketPrice; empty on error. A browser User-Agent is
+    required — Yahoo's edge answers the default curl agent with HTTP 429."""
+    return ("curl -s --max-time 8 -A 'Mozilla/5.0 (X11; Linux x86_64)' "
+            "'https://query1.finance.yahoo.com/v8/finance/"
             f"chart/{symbol}?interval=1d&range=1d' | "
             "grep -oE '\"regularMarketPrice\":[0-9.]+' | head -1 | grep -oE '[0-9.]+'")
 

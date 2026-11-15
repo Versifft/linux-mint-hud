@@ -4,6 +4,14 @@ All notable user-facing changes to linux-mint-hud. See the
 [app guide](docs/guide.md) for how everything described here works, and the
 [README](README.md) for the project overview.
 
+## 2.0.1 — 2026
+
+### Fixed
+
+- **Stocks, Indices and Forex & metals** catalog modules returned nothing —
+  Yahoo Finance answered the default download agent with HTTP 429. They now
+  send a browser User-Agent.
+
 ## 2.0 — 2026
 
 ### New

@@ -3,7 +3,7 @@ set -euo pipefail
 umask 022
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VERSION="2.0"
+VERSION="2.0.1"
 PKG="linux-mint-hud"
 STAGE="$HERE/build/$PKG"
 OUT="$HERE/dist"
@@ -82,7 +82,16 @@ EOF
 
 # Debian changelog so Linux Mint's Update Manager (and apt) show "what's new".
 cat > "$DOCDIR/changelog.Debian" <<EOF
-linux-mint-hud ($VERSION) stable; urgency=medium
+linux-mint-hud (2.0.1) stable; urgency=medium
+
+  Fixed:
+  * Stocks, Indices and Forex & metals catalog modules showed nothing: Yahoo
+    Finance answered the default download agent with HTTP 429; they now send a
+    browser User-Agent.
+
+ -- Versifft <versifft@users.noreply.github.com>  $(date -R)
+
+linux-mint-hud (2.0) stable; urgency=medium
 
   New:
   * Horizontal top-bar panels (sections arranged left-to-right).
