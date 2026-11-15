@@ -1,0 +1,23 @@
+Architectures: all
+Codename: stable
+Components: main
+Date: Sun, 15 Nov 2026 22:52:51 +0000
+Label: linux-mint-hud
+Origin: linux-mint-hud
+Suite: stable
+MD5Sum:
+ 1bce317a188ef2eb07923d7b091dd641              150 Release
+ 85a3e4cdcb4090bd0eb1b2f6598d4970             1208 main/binary-all/Packages
+ 22b0b323e441dd39d99c803738dc2d71              784 main/binary-all/Packages.gz
+SHA1:
+ 94f6bb95007575b3a1d0a865258a5e87378f9a48              150 Release
+ a7171fe373c07766c6bc73703b08644a82054a1e             1208 main/binary-all/Packages
+ 5a47c92bb0a8e1651c14ae17c82671fc115e5fc6              784 main/binary-all/Packages.gz
+SHA256:
+ bf24121b215337f8223f7ac10d28f59064221a71fff98a30ed18b0c844cf80dc              150 Release
+ b28d58ca46b02ddec31f1adc5964324ab79f70f9dbad71128ad5ca14e8075fa5             1208 main/binary-all/Packages
+ 7ce7125f1001d3d8c6fd84e899a311ea972cd3b091fe0e64b805ea893b01aa3d              784 main/binary-all/Packages.gz
+SHA512:
+ 0008868a919dc1ac619db99f5216250e18e3477ea0719ae4b60be79ad6d428c6359dbc40a7572b07ac308fca11820ecbe2e7cb07032e95e273a74b46fe2a9af0              150 Release
+ 64f02e24b6226668bc5ae4d82e936f4a8e72098cb72f5e20a4395ee798864b9d933fa1e6b33ff53235d9ddda700b73d9b0795be2739e6d5ea3536dac13da3442             1208 main/binary-all/Packages
+ 661f1ea799df8bed9dd6bd1816ffb1557a5730e12e5951cfda1de64aaf7522bf5cc25bd31f52540037a2db528061cba6f351122a26b4cb18991833253748d353              784 main/binary-all/Packages.gz
